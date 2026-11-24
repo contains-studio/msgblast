@@ -212,6 +212,26 @@ final class WantsLiveTests: XCTestCase {
         XCTAssertTrue(page.events.contains { $0.type == "item.created" && $0.item?.id == item.id }, "the new item arrives as an event")
     }
 
+    /// The parts of sign-in that need no account: the challenge, discovery, registration and the sign-in page.
+    /// Registers one client named msgblast on the server. Needs only WANT_LIVE_MCP.
+    @MainActor func testSignInChallengeAndOAuthDiscoveryAgainstALiveServer() async throws {
+        guard let raw = ProcessInfo.processInfo.environment["WANT_LIVE_MCP"], let resource = URL(string: raw) else {
+            throw XCTSkip("Set WANT_LIVE_MCP to check sign-in discovery against a live Want MCP server")
+        }
+        var challenge: URL?
+        do { _ = try await WantMCPClient(endpoint: resource, version: "test") { nil }.myLists() } catch WantError.unauthorized(let hint) { challenge = hint }
+        let hint = try XCTUnwrap(challenge, "my_lists without a credential gets the auth challenge")
+        let server = try await WantOAuth.discover(resource: resource, hint: hint)
+        XCTAssertTrue(server.requiresIssuer)
+        let callback = WantOAuthCallback()
+        defer { callback.stop() }
+        let redirect = try await callback.start()
+        let clientID = try await WantOAuth.register(server, redirect: redirect)
+        let page = WantOAuth.authorizeURL(server, clientID: clientID, redirect: redirect, pkce: WantOAuth.PKCE(), resource: resource)
+        let (_, response) = try await URLSession.shared.data(from: page)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200, "the sign-in page accepts msgblast's authorization request")
+    }
+
     /// Also needs WANT_LIVE_OAUTH_DIR: the test writes `authorize-url.txt` there and waits up to five
     /// minutes for someone to sign in at that URL, whose redirect reaches msgblast's loopback listener.
     @MainActor func testOAuthSignInAgainstALiveServer() async throws {
