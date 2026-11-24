@@ -6,6 +6,7 @@ public actor WantFixture: WantService {
     private var lists: [WantList]
     private var comments: [WantComment]
     private var pending: [WantEvent] = []
+    private var suggested: [WantEntry] = []
     private var seq = 100
     private let activityAt: Date
 
@@ -51,7 +52,7 @@ public actor WantFixture: WantService {
         return list
     }
     public func comments(listID: String) -> [WantComment] { comments.filter { comment in comment.listId == listID && pending.allSatisfy { $0.comment?.id != comment.id } } }
-    public func suggestions(listID: String) -> [WantEntry] { [] }
+    public func suggestions(listID: String) -> [WantEntry] { suggested.filter { $0.listId == listID } }
     public func addItem(listID: String, text: String) throws -> WantItem {
         guard let index = lists.firstIndex(where: { $0.id == listID }) else { throw WantError.server("List not found") }
         seq += 1
@@ -67,6 +68,7 @@ public actor WantFixture: WantService {
         let matches = { (event: WantEvent) in type == "list.activity" || event.type == type }
         let events = pending.filter { matches($0) && $0.seq > after }
         pending.removeAll(where: matches)
+        suggested += events.filter { $0.type == "entry.suggested" }.compactMap(\.entry)
         return WantEventPage(events: events, cursor: String(events.map(\.seq).max() ?? after), nextPoll: 5)
     }
 }
