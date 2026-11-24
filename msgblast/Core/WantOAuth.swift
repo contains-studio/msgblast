@@ -29,6 +29,10 @@ public struct WantCredential: Codable, Equatable, Sendable {
 public enum WantOAuth {
     public struct Server: Equatable, Sendable {
         public var issuer: String, authorizationEndpoint: URL, tokenEndpoint: URL, registrationEndpoint: URL?
+        /// The resource's scopes, plus `offline_access` when offered so the grant can be refreshed.
+        public var scope: String?
+        /// The server promised `iss` on its redirect, so a redirect without it is refused.
+        public var requiresIssuer = false
     }
 
     /// `resource_metadata` from a `WWW-Authenticate: Bearer ...` challenge.
@@ -50,8 +54,12 @@ public enum WantOAuth {
               let authorize = (server["authorization_endpoint"] as? String).flatMap(URL.init(string:)),
               let token = (server["token_endpoint"] as? String).flatMap(URL.init(string:)) else { throw WantError.server("The Want MCP's sign-in server could not be found.") }
         guard (server["code_challenge_methods_supported"] as? [String])?.contains("S256") == true else { throw WantError.server("The Want MCP's sign-in server does not support PKCE.") }
+        let offline = (server["scopes_supported"] as? [String])?.contains("offline_access") == true ? ["offline_access"] : []
+        let scopes = (metadata["scopes_supported"] as? [String] ?? []) + offline
         return Server(issuer: issuer, authorizationEndpoint: authorize, tokenEndpoint: token,
-                      registrationEndpoint: (server["registration_endpoint"] as? String).flatMap(URL.init(string:)))
+                      registrationEndpoint: (server["registration_endpoint"] as? String).flatMap(URL.init(string:)),
+                      scope: scopes.isEmpty ? nil : scopes.joined(separator: " "),
+                      requiresIssuer: server["authorization_response_iss_parameter_supported"] as? Bool == true)
     }
 
     /// Registers msgblast for this sign-in's redirect and returns its client id.
@@ -80,7 +88,7 @@ public enum WantOAuth {
             .init(name: "redirect_uri", value: redirect.absoluteString), .init(name: "code_challenge", value: pkce.challenge),
             .init(name: "code_challenge_method", value: "S256"), .init(name: "state", value: pkce.state),
             .init(name: "resource", value: resource.absoluteString),
-        ]
+        ] + (server.scope.map { [.init(name: "scope", value: $0)] } ?? [])
         return components.url!
     }
 
@@ -88,7 +96,7 @@ public enum WantOAuth {
     public static func exchange(callback: URL, server: Server, clientID: String, redirect: URL, pkce: PKCE, resource: URL,
                                 session: URLSession = .shared) async throws -> WantCredential {
         let query = Dictionary(URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems?.map { ($0.name, $0.value ?? "") } ?? [], uniquingKeysWith: { a, _ in a })
-        guard query["state"] == pkce.state, query["iss"].map({ $0 == server.issuer }) ?? true else { throw WantError.server("Sign-in did not match this request. Try again.") }
+        guard query["state"] == pkce.state, query["iss"].map({ $0 == server.issuer }) ?? !server.requiresIssuer else { throw WantError.server("Sign-in did not match this request. Try again.") }
         guard let code = query["code"] else { throw WantError.server(query["error_description"] ?? query["error"] ?? "Sign-in was cancelled.") }
         return try await token(server.tokenEndpoint, clientID: clientID, form: [
             "grant_type": "authorization_code", "code": code, "redirect_uri": redirect.absoluteString,

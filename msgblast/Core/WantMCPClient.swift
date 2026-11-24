@@ -23,7 +23,7 @@ public protocol WantService: Sendable {
     func comments(listID: String) async throws -> [WantComment]
     func suggestions(listID: String) async throws -> [WantEntry]
     func addItem(listID: String, text: String) async throws -> WantItem
-    /// New events of one type since `cursor` (nil starts from now).
+    /// New events of one type since `cursor` (nil starts from now). `list.activity` is every type.
     func poll(_ type: String, cursor: String?) async throws -> WantEventPage
 }
 
@@ -49,18 +49,18 @@ public struct WantMCPClient: WantService {
         self.endpoint = endpoint; self.session = session; self.version = version; self.token = token
     }
 
-    // The contract names the tools but not their arguments; these follow its snake_case wire names.
     public func myLists() async throws -> [WantList] { try decode([WantList].self, try await tool("my_lists", [:]), key: "lists") }
-    public func list(_ id: String) async throws -> WantList { try decode(WantList.self, try await tool("get_list", ["list_id": id])) }
+    public func list(_ id: String) async throws -> WantList { try decode(WantList.self, try await tool("get_list", ["list": id])) }
     public func comments(listID: String) async throws -> [WantComment] {
-        try decode([WantComment].self, try await tool("get_comments", ["list_id": listID]), key: "data")
+        try decode([WantComment].self, try await tool("get_comments", ["list": listID]), key: "comments")
     }
     public func suggestions(listID: String) async throws -> [WantEntry] {
         struct Row: Decodable { var entry: WantEntry }
-        return try decode([Row].self, try await tool("list_pending_suggestions", ["list_id": listID]), key: "data").map(\.entry)
+        return try decode([Row].self, try await tool("list_pending_suggestions", ["list": listID]), key: "suggestions").map(\.entry)
     }
     public func addItem(listID: String, text: String) async throws -> WantItem {
-        try decode(WantItem.self, try await tool("add_item", ["list_id": listID, "text": text]))
+        let content = try await tool("add_item", ["list": listID, "text": text])
+        return try decode(WantItem.self, (content as? [String: Any])?["item"] ?? content)
     }
 
     public func poll(_ type: String, cursor: String?) async throws -> WantEventPage {

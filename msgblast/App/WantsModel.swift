@@ -22,8 +22,8 @@ import msgblastRemoteProtocol
         var forwardActivity = false
         var forwardAgents: [String] = []
     }
-    static let forwardedTypes = ["comment.created", "entry.suggested"]
-    static let polledTypes = forwardedTypes + ["entry.listed"]
+    /// Every event type on the lists this credential writes, in one poll.
+    static let activity = "list.activity"
     static var endpoint: URL {
         UserDefaults.standard.string(forKey: "WantMCPURL").flatMap(URL.init(string:)) ?? URL(string: "https://mcp.wantmcp.com/mcp")!
     }
@@ -58,7 +58,7 @@ import msgblastRemoteProtocol
         }
         if app.demo {
             signedIn = true
-            service = WantFixture()
+            service = WantFixture(activityDelay: 60)
         } else {
             credential = keychain.read()
             signedIn = credential != nil
@@ -200,39 +200,34 @@ import msgblastRemoteProtocol
 
     // MARK: Events
 
-    /// One round of `events/poll` for each watched type. Returns the seconds until the next round.
+    /// One round of `events/poll`. Returns the seconds until the next round.
     private func poll() async -> TimeInterval {
-        var delay: TimeInterval = 30, changed = Set<String>()
-        for type in Self.polledTypes {
-            do {
-                for _ in 0..<10 {
-                    let page = try await service.poll(type, cursor: saved.cursors[type])
-                    // Saved before forwarding, so a crash mid-send never forwards the same event twice.
-                    update { $0.cursors[type] = page.cursor }
-                    changed.formUnion(page.events.map(\.listId))
-                    for event in page.events { await forward(event) }
-                    delay = min(delay, max(page.nextPoll ?? delay, 5))
-                    if !page.hasMore { break }
-                }
-            } catch {
-                fail(error)
-                return 60
+        var delay: TimeInterval = 30, changed = false
+        do {
+            for _ in 0..<10 {
+                let page = try await service.poll(Self.activity, cursor: saved.cursors[Self.activity])
+                // Saved before forwarding, so a crash mid-send never forwards the same event twice.
+                update { $0.cursors[Self.activity] = page.cursor }
+                changed = changed || !page.events.isEmpty
+                for event in page.events { await forward(event) }
+                delay = max(page.nextPoll ?? delay, 5)
+                if !page.hasMore { break }
             }
+        } catch {
+            fail(error)
+            return 60
         }
-        if !changed.isEmpty { await reload() }
+        if changed { await reload() }
         return delay
     }
 
-    /// Tells the item's agents about a new comment or outside suggestion. Comments from agents are
-    /// not forwarded, so agents never answer each other in a loop.
+    /// Tells the item's agents about a new comment or outside suggestion, in the item's open conversation when there is one.
     private func forward(_ event: WantEvent) async {
-        guard saved.forwardActivity, Self.forwardedTypes.contains(event.type), !event.actor.isAgent,
-              let list = lists.first(where: { $0.id == event.listId }), let text = WantPrompt.activity(event, list: list) else { return }
         let itemID = event.item?.id ?? event.entry?.itemId
         let blast = itemID.flatMap { saved.blasts[$0] }
-        let sendable = Set(agents.map(\.id))
-        let targets = (blast?.agents ?? saved.forwardAgents).filter(sendable.contains)
-        guard !targets.isEmpty else { return }
+        let targets = WantForwarding.recipients(for: event, enabled: saved.forwardActivity, itemAgents: blast?.agents,
+                                                defaults: saved.forwardAgents, sendable: Set(agents.map(\.id)))
+        guard !targets.isEmpty, let list = lists.first(where: { $0.id == event.listId }), let text = WantPrompt.activity(event, list: list) else { return }
         let remote = targets.compactMap(AgentControlSend.remoteID)
         if let id = blast?.comparisonID, app.comparison(id)?.endedAt == nil {
             _ = await send(.sendShared(conversationID: id, text: text, agentIDs: remote, attachmentIDs: []))

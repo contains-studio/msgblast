@@ -1,14 +1,16 @@
 import Foundation
 
-/// Sample want lists for Demo and previews. Never contacts the network. After the first poll it
-/// delivers one comment and one outside suggestion, so forwarding can be shown.
+/// Sample want lists for Demo and previews. Never contacts the network. Once `activityDelay` has
+/// passed it delivers one comment and one outside suggestion, so forwarding can be shown.
 public actor WantFixture: WantService {
     private var lists: [WantList]
     private var comments: [WantComment]
     private var pending: [WantEvent] = []
     private var seq = 100
+    private let activityAt: Date
 
-    public init(now: Date = Date()) {
+    public init(now: Date = Date(), activityDelay: TimeInterval = 0) {
+        activityAt = now.addingTimeInterval(activityDelay)
         let me = WantActor.user(handle: "quiet-otter-4821")
         func ago(_ hours: Double) -> Date { now.addingTimeInterval(-hours * 3600) }
         func price(_ value: String, _ by: WantActor, _ hours: Double, was: String? = nil) -> WantPrice {
@@ -60,10 +62,11 @@ public actor WantFixture: WantService {
         return item
     }
     public func poll(_ type: String, cursor: String?) -> WantEventPage {
-        guard let cursor else { return WantEventPage(events: [], cursor: "0") }
+        guard let cursor, Date() >= activityAt else { return WantEventPage(events: [], cursor: cursor ?? "0", nextPoll: 5) }
         let after = Int(cursor) ?? 0
-        let events = pending.filter { $0.type == type && $0.seq > after }
-        pending.removeAll { $0.type == type }
+        let matches = { (event: WantEvent) in type == "list.activity" || event.type == type }
+        let events = pending.filter { matches($0) && $0.seq > after }
+        pending.removeAll(where: matches)
         return WantEventPage(events: events, cursor: String(events.map(\.seq).max() ?? after), nextPoll: 5)
     }
 }

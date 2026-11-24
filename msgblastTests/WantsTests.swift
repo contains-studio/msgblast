@@ -45,7 +45,7 @@ final class WantsTests: XCTestCase {
             let body = try! JSONSerialization.jsonObject(with: WantStub.body(request)) as! [String: Any]
             let params = body["params"] as! [String: Any]
             XCTAssertEqual(params["name"] as? String, "get_list")
-            XCTAssertEqual((params["arguments"] as? [String: String])?["list_id"], "lst_1")
+            XCTAssertEqual((params["arguments"] as? [String: String])?["list"], "lst_1")
             let meta = params["_meta"] as! [String: Any]
             XCTAssertEqual(meta["io.modelcontextprotocol/protocolVersion"] as? String, "2026-07-28")
             XCTAssertEqual((meta["io.modelcontextprotocol/clientInfo"] as? [String: String])?["name"], "msgblast")
@@ -138,6 +138,20 @@ final class WantsTests: XCTestCase {
         XCTAssertNil(WantPrompt.activity(listed, list: list))
     }
 
+    func testForwardingGoesToTheItemsAgentsAndSkipsAgentsAndOtherEvents() async throws {
+        let fixture = WantFixture()
+        let events = await fixture.poll("comment.created", cursor: "0").events
+        let comment = try XCTUnwrap(events.first)
+        let sendable: Set = ["web:claude", "web:chatgpt"]
+        XCTAssertEqual(WantForwarding.recipients(for: comment, enabled: true, itemAgents: ["web:claude", "web:gone"], defaults: ["web:chatgpt"], sendable: sendable), ["web:claude"])
+        XCTAssertEqual(WantForwarding.recipients(for: comment, enabled: true, itemAgents: nil, defaults: ["web:chatgpt"], sendable: sendable), ["web:chatgpt"])
+        XCTAssertEqual(WantForwarding.recipients(for: comment, enabled: false, itemAgents: ["web:claude"], defaults: [], sendable: sendable), [])
+        var byAgent = comment; byAgent.actor = .agent(name: "Claude", ownerHandle: "quiet-otter-4821")
+        XCTAssertEqual(WantForwarding.recipients(for: byAgent, enabled: true, itemAgents: ["web:claude"], defaults: [], sendable: sendable), [], "agents never answer each other in a loop")
+        var listed = comment; listed.type = "entry.listed"
+        XCTAssertEqual(WantForwarding.recipients(for: listed, enabled: true, itemAgents: ["web:claude"], defaults: [], sendable: sendable), [])
+    }
+
     func testWriteKeyValidation() {
         XCTAssertNotNil(WantCredential.writeKey("  wk_" + String(repeating: "a", count: 32) + "\n"))
         XCTAssertNil(WantCredential.writeKey("wk_short"))
@@ -176,6 +190,53 @@ final class WantsTests: XCTestCase {
                                              clientID: "client", redirect: redirect, pkce: pkce, resource: endpoint, session: session)
             XCTFail("a mismatched state must be refused")
         } catch { XCTAssertEqual(error as? WantError, .server("Sign-in did not match this request. Try again.")) }
+    }
+}
+
+/// Runs only against a real server: set WANT_LIVE_MCP (for example http://localhost:8787/mcp) and
+/// WANT_LIVE_KEY (a write key) for the test process, e.g. as TEST_RUNNER_WANT_LIVE_MCP with xcodebuild.
+/// It adds one item to the key's list.
+final class WantsLiveTests: XCTestCase {
+    func testReadAddAndPollAgainstALiveServer() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let raw = env["WANT_LIVE_MCP"], let endpoint = URL(string: raw), let key = env["WANT_LIVE_KEY"] else {
+            throw XCTSkip("Set WANT_LIVE_MCP and WANT_LIVE_KEY to run against a live Want MCP server")
+        }
+        let client = WantMCPClient(endpoint: endpoint, version: "test") { key }
+        let lists = try await client.myLists()
+        let list = try await client.list(try XCTUnwrap(lists.first).id)
+        _ = try await client.comments(listID: list.id)
+        _ = try await client.suggestions(listID: list.id)
+        let start = try await client.poll("list.activity", cursor: nil)
+        let item = try await client.addItem(listID: list.id, text: "msgblast live test \(UUID().uuidString.prefix(8))")
+        let page = try await client.poll("list.activity", cursor: start.cursor)
+        XCTAssertTrue(page.events.contains { $0.type == "item.created" && $0.item?.id == item.id }, "the new item arrives as an event")
+    }
+
+    /// Also needs WANT_LIVE_OAUTH_DIR: the test writes `authorize-url.txt` there and waits up to five
+    /// minutes for someone to sign in at that URL, whose redirect reaches msgblast's loopback listener.
+    @MainActor func testOAuthSignInAgainstALiveServer() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let raw = env["WANT_LIVE_MCP"], let resource = URL(string: raw), let dir = env["WANT_LIVE_OAUTH_DIR"] else {
+            throw XCTSkip("Set WANT_LIVE_MCP and WANT_LIVE_OAUTH_DIR to sign in against a live Want MCP server")
+        }
+        let callback = WantOAuthCallback()
+        defer { callback.stop() }
+        let redirect = try await callback.start()
+        let server = try await WantOAuth.discover(resource: resource, hint: nil)
+        let clientID = try await WantOAuth.register(server, redirect: redirect)
+        let pkce = WantOAuth.PKCE()
+        let authorize = WantOAuth.authorizeURL(server, clientID: clientID, redirect: redirect, pkce: pkce, resource: resource)
+        try authorize.absoluteString.write(to: URL(fileURLWithPath: dir).appendingPathComponent("authorize-url.txt"), atomically: true, encoding: .utf8)
+        let timeout = Task { try await Task.sleep(for: .seconds(300)); callback.stop() }
+        let answer = try await callback.wait()
+        timeout.cancel()
+        let credential = try await WantOAuth.exchange(callback: answer, server: server, clientID: clientID, redirect: redirect, pkce: pkce, resource: resource)
+        let lists = try await WantMCPClient(endpoint: resource, version: "test") { credential.accessToken }.myLists()
+        XCTAssertFalse(lists.isEmpty, "the grant writes the lists ticked on the consent page")
+        let refreshed = try await WantOAuth.refresh(credential, resource: resource)
+        XCTAssertNotEqual(refreshed.accessToken, credential.accessToken)
+        _ = try await WantMCPClient(endpoint: resource, version: "test") { refreshed.accessToken }.myLists()
     }
 }
 
