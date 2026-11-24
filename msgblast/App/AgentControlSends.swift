@@ -16,7 +16,7 @@ import msgblastRemoteProtocol
     private let host: AppRemoteHost
     private let availability: AvailabilityModel
 
-    init(model: AppModel) {
+    init(model: AppModel, source: TelemetryProperties.Source = .outsideAgent) {
         self.model = model
         let remote = model.remote
         // AppRemoteHost reads settings only on the main actor.
@@ -28,7 +28,7 @@ import msgblastRemoteProtocol
         let availability = AvailabilityModel(sessions: { [unowned model] in model.webAgents.sessions },
                                              inputs: { [unowned model] in model.remoteAvailabilityInputs(settings: settings()) })
         self.availability = availability
-        host = AppRemoteHost(model: model, availability: availability, avatars: remote.avatars, keepAwake: remote.keepAwake, power: remote.power, source: .outsideAgent, settings: settings)
+        host = AppRemoteHost(model: model, availability: availability, avatars: remote.avatars, keepAwake: remote.keepAwake, power: remote.power, source: source, settings: settings)
         executor = RemoteCommandExecutor(host: host)
         activity = model.agentSendActivity
     }

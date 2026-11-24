@@ -50,8 +50,8 @@ public struct TelemetryProperties: Codable, Sendable {
     public enum Operation: String, Codable, Sendable { case send, setup, storage }
     /// `uncertain` is used only by `agent_send_result`, for a send the agent's page could not confirm.
     public enum Result: String, Codable, Sendable { case success, failure, uncertain }
-    /// Where a send started: the Mac's own window, the paired iPhone, or an outside agent over MCP.
-    public enum Source: String, Codable, Sendable { case mac, phone, outsideAgent }
+    /// Where a send started: the Mac's own window, the paired iPhone, an outside agent over MCP, or the Wants panel.
+    public enum Source: String, Codable, Sendable { case mac, phone, outsideAgent, wants }
     public enum Duration: String, Codable, Sendable {
         case under1s = "under_1s", oneTo5s = "1_to_5s", fiveTo30s = "5_to_30s", over30s = "over_30s"
         public init(seconds: TimeInterval) {

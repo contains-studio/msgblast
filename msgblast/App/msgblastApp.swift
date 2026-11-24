@@ -122,6 +122,7 @@ struct MainWindowActions {
     var newBlast: () -> Void
     var showAgents: () -> Void
     var showDiscover: () -> Void
+    var showWants: () -> Void
     var canStartBlast: Bool
 }
 
@@ -155,6 +156,8 @@ private struct BlastCommands: Commands {
                 .keyboardShortcut("1").disabled(actions == nil)
             Button("Show Discover") { actions?.showDiscover() }
                 .keyboardShortcut("2").disabled(actions == nil)
+            Button("Show Wants") { actions?.showWants() }
+                .keyboardShortcut("3").disabled(actions == nil)
         }
         CommandGroup(after: .textEditing) {
             Button("Find in Discover…") { find?() }
@@ -200,6 +203,7 @@ private final class AppStartup: ObservableObject {
             model.coordinator = WindowCoordinator(model: model)
             // Loads remote control settings; listens only if the user turned it on.
             _ = model.remote
+            model.wants.start()
         }
         // Keep comparison menus in sync without constructing the model for an
         // uninstalled copy (its initializer starts Messages history polling).

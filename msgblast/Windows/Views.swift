@@ -182,7 +182,7 @@ struct MainView: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var web: WebAgents
     private let updater: AppUpdater
-    private enum DetailSelection { case agents, discover }
+    private enum DetailSelection { case agents, discover, wants }
     @StateObject private var captureLayout = ChatCaptureLayout()
     @State private var selection = DetailSelection.agents
     @State private var showingComparison: Bool
@@ -219,6 +219,10 @@ struct MainView: View {
                         sidebarLabel("Discover", systemImage: "safari", selected: selection == .discover)
                     }.buttonStyle(.plain).accessibilityLabel("Discover")
                         .accessibilityValue(selection == .discover ? "Selected" : "Not selected")
+                    Button { selection = .wants } label: {
+                        sidebarLabel("Wants", systemImage: "gift", selected: selection == .wants)
+                    }.buttonStyle(.plain).accessibilityLabel("Wants")
+                        .accessibilityValue(selection == .wants ? "Selected" : "Not selected")
                 }
                 Section("Comparisons") {
                 ForEach(model.state.comparisons) { comparison in
@@ -250,6 +254,8 @@ struct MainView: View {
         } detail: {
             if selection == .discover {
                 DiscoverView(model: model).navigationTitle("")
+            } else if selection == .wants {
+                WantsView(model: model, wants: model.wants).navigationTitle("")
             } else {
             VStack(spacing: 0) {
                 if model.demo { demoControls }
@@ -278,6 +284,7 @@ struct MainView: View {
             newBlast: { model.requestNewBlast() },
             showAgents: { showAgentGrid() },
             showDiscover: { selection = .discover },
+            showWants: { selection = .wants },
             canStartBlast: model.canStartNewBlast))
         .onChange(of: model.newBlastRequest) { _, _ in selection = .agents; showingComparison = model.newBlastShowsChat }
         .onChange(of: model.webComparisonRequest) { _, _ in selection = .agents; showingComparison = true }
