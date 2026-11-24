@@ -10,7 +10,6 @@ public struct WantCredential: Codable, Equatable, Sendable {
     public var expiresAt: Date?
     /// Set for OAuth grants, so the token can be refreshed.
     public var clientID: String?, tokenEndpoint: URL?
-    public var isWriteKey: Bool { clientID == nil }
 
     public init(accessToken: String, refreshToken: String? = nil, expiresAt: Date? = nil, clientID: String? = nil, tokenEndpoint: URL? = nil) {
         self.accessToken = accessToken; self.refreshToken = refreshToken; self.expiresAt = expiresAt; self.clientID = clientID; self.tokenEndpoint = tokenEndpoint

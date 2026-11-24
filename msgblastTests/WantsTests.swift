@@ -156,7 +156,6 @@ final class WantsTests: XCTestCase {
         XCTAssertNotNil(WantCredential.writeKey("  wk_" + String(repeating: "a", count: 32) + "\n"))
         XCTAssertNil(WantCredential.writeKey("wk_short"))
         XCTAssertNil(WantCredential.writeKey("sk_" + String(repeating: "a", count: 32)))
-        XCTAssertTrue(WantCredential.writeKey("wk_" + String(repeating: "a", count: 32))!.isWriteKey)
     }
 
     func testOAuthDiscoveryAuthorizeURLAndStateCheck() async throws {
