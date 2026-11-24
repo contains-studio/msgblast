@@ -185,12 +185,12 @@ import msgblastRemoteProtocol
 
     func openConversation(_ id: UUID) { app.coordinator?.open(id) }
 
-    private func send(_ action: RemoteAction) async -> RemoteCommandResult? {
+    private func send(_ action: RemoteAction, quietly: Bool = false) async -> RemoteCommandResult? {
         sending = true
         defer { sending = false }
-        await app.remoteAvailabilityProbe(slow: false)
-        let result = await sends.executor.execute(RemoteCommand(action: action))
+        let result = await sends.send(RemoteCommand(action: action), client: "Wants")
         guard result.outcome != .rejected else {
+            guard !quietly else { return nil }
             let reasons = result.agentReasons.values.sorted()
             error = ([result.message ?? "msgblast did not send it."] + reasons).joined(separator: " ")
             return nil
@@ -227,11 +227,13 @@ import msgblastRemoteProtocol
         let blast = itemID.flatMap { saved.blasts[$0] }
         let targets = WantForwarding.recipients(for: event, enabled: saved.forwardActivity, itemAgents: blast?.agents,
                                                 defaults: saved.forwardAgents, sendable: Set(agents.map(\.id)))
-        guard !targets.isEmpty, let list = lists.first(where: { $0.id == event.listId }), let text = WantPrompt.activity(event, list: list) else { return }
+        guard !targets.isEmpty else { return }
+        if !lists.contains(where: { $0.id == event.listId }) { await reload() }
+        guard let list = lists.first(where: { $0.id == event.listId }), let text = WantPrompt.activity(event, list: list) else { return }
         let remote = targets.compactMap(AgentControlSend.remoteID)
-        if let id = blast?.comparisonID, app.comparison(id)?.endedAt == nil {
-            _ = await send(.sendShared(conversationID: id, text: text, agentIDs: remote, attachmentIDs: []))
-        } else if let result = await send(.createConversation(text: text, agentIDs: remote, attachmentIDs: [])), let itemID {
+        if let id = blast?.comparisonID, app.comparison(id)?.endedAt == nil,
+           await send(.sendShared(conversationID: id, text: text, agentIDs: remote, attachmentIDs: []), quietly: true) != nil { return }
+        if let result = await send(.createConversation(text: text, agentIDs: remote, attachmentIDs: []), quietly: true), let itemID {
             update { $0.blasts[itemID] = .init(comparisonID: result.conversationID, agents: targets) }
         }
     }

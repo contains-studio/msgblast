@@ -111,7 +111,8 @@ public struct WantMCPClient: WantService {
         if let token = await token() { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw WantError.invalidResponse }
-        if http.statusCode == 401 || http.statusCode == 403 {
+        if http.statusCode == 403 { throw WantError.server("The Want MCP did not allow that request.") }
+        if http.statusCode == 401 {
             throw WantError.unauthorized(resourceMetadata: WantOAuth.resourceMetadata(http.value(forHTTPHeaderField: "WWW-Authenticate")))
         }
         let message = try Self.message(data, contentType: http.value(forHTTPHeaderField: "Content-Type"), id: id)

@@ -202,7 +202,7 @@ private struct WantEntryRow: View {
     let entry: WantEntry
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            AsyncImage(url: entry.imageUrl.flatMap(URL.init(string:))) { image in
+            AsyncImage(url: entry.status == "listed" ? entry.imageUrl.flatMap(URL.init(string:)) : nil) { image in
                 image.resizable().scaledToFit()
             } placeholder: {
                 Image(systemName: "shippingbox").font(.title2).foregroundStyle(.tertiary)
