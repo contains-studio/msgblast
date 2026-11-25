@@ -18,6 +18,8 @@ with product offers. msgblast is a native MCP client of
   Lists from servers without formats are shopping lists.
 - An item **Waiting on you** has a question from an agent. The panel shows it at
   the top of the item with one-tap options and an answer field (`answer_question`).
+  New questions stay with the person; an answer is forwarded to the agents asked
+  about that item.
 - Prices show "unverified" unless read on the retailer's own page, and when they
   were checked.
 - **Add a want** adds an item to a list.
@@ -30,6 +32,10 @@ with product offers. msgblast is a native MCP client of
   agents reply in msgblast, and are told the sentence wantmcp.com teaches: "set up
   wantmcp.com for keeping track of the things I want". It also lists what is already posted.
   Replies show under the item; new entries appear when the event feed reports them.
+- **Forward Activity** (off by default) sends each new comment from a person and
+  each new outside suggestion to the agents last asked about that item, in the
+  same conversation while it is open, or to the agents chosen when forwarding was
+  turned on. Anything an agent posted is never forwarded, so agents cannot loop.
 - **Connect Agents** shows the server URL and links to the setup prompts on
   wantmcp.com. Each agent needs its own connection to post to a list.
 
@@ -49,8 +55,8 @@ means the sign-in has ended), `get_list`, `get_comments`,
 `get_list` is read in pages and carries no entries) and `answer_question`, and
 `events/poll` for
 `list.activity` (every event type on the lists the credential writes), keeping
-its cursor in `wants.json` beside `state.json`. The first poll starts from now; new
-events reload the lists and opened items.
+its cursor in `wants.json` beside `state.json`. The cursor is saved before an event is
+forwarded, so a crash never forwards it twice. The first poll starts from now.
 
 The official Swift MCP SDK implements up to 2025-11-25, without the stateless
 revision or the Events extension, so msgblast uses this small client, as its
@@ -73,4 +79,4 @@ expires. Signing out deletes it.
 `defaults write <bundle id> WantMCPURL <url>` points a build at another MCP
 endpoint, such as a local server. Demo uses `WantFixture`: sample lists, no
 network, and one comment and one outside suggestion a minute after launch so
-the panel can be seen updating.
+forwarding can be shown.

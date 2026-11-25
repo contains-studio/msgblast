@@ -17,8 +17,10 @@ import msgblastRemoteProtocol
         }
         /// `events/poll` cursor per event type.
         var cursors: [String: String] = [:]
-        /// The newest blast for each item, so its replies show under it.
+        /// The newest blast for each item, so its replies show and activity goes to the same agents.
         var blasts: [String: Blast] = [:]
+        var forwardActivity = false
+        var forwardAgents: [String] = []
 
         init() {}
         /// Each field is optional on disk, so a file from a build that knew fewer of them still loads.
@@ -26,6 +28,8 @@ import msgblastRemoteProtocol
             let c = try decoder.container(keyedBy: CodingKeys.self)
             cursors = try c.decodeIfPresent([String: String].self, forKey: .cursors) ?? [:]
             blasts = try c.decodeIfPresent([String: Blast].self, forKey: .blasts) ?? [:]
+            forwardActivity = try c.decodeIfPresent(Bool.self, forKey: .forwardActivity) ?? false
+            forwardAgents = try c.decodeIfPresent([String].self, forKey: .forwardAgents) ?? []
         }
     }
     /// Every event type on the lists this credential writes, in one poll.
@@ -222,11 +226,12 @@ import msgblastRemoteProtocol
 
     func openConversation(_ id: UUID) { app.coordinator?.open(id) }
 
-    private func send(_ action: RemoteAction) async -> RemoteCommandResult? {
+    private func send(_ action: RemoteAction, quietly: Bool = false) async -> RemoteCommandResult? {
         sendsInFlight += 1
         defer { sendsInFlight -= 1 }
         let result = await sends.send(RemoteCommand(action: action), client: "Wants")
         guard result.outcome != .rejected else {
+            guard !quietly else { return nil }
             let reasons = result.agentReasons.values.sorted()
             error = ([result.message ?? "msgblast did not send it."] + reasons).joined(separator: " ")
             return nil
@@ -244,7 +249,7 @@ import msgblastRemoteProtocol
             for _ in 0..<10 {
                 let page = try await service.poll(Self.activity, cursor: saved.cursors[Self.activity])
                 guard session == self.session else { return delay }
-                update { $0.cursors[Self.activity] = page.cursor }
+                await take(page)
                 changed = changed || !page.events.isEmpty
                 delay = max(page.nextPoll ?? delay, 5)
                 if !page.hasMore { break }
@@ -255,6 +260,36 @@ import msgblastRemoteProtocol
         }
         if changed { await reload() }
         return delay
+    }
+
+    /// Saves the cursor before forwarding, so a crash mid-send never forwards the same event twice.
+    private func take(_ page: WantEventPage) async {
+        update { $0.cursors[Self.activity] = page.cursor }
+        for event in page.events { await forward(event) }
+    }
+
+    func setForwarding(_ on: Bool, agents: [String]? = nil) {
+        update { saved in
+            saved.forwardActivity = on
+            if let agents { saved.forwardAgents = agents }
+        }
+    }
+
+    /// Tells the item's agents about a new comment, outside suggestion or answer, in the item's open conversation when there is one.
+    private func forward(_ event: WantEvent) async {
+        let itemID = event.item?.id ?? event.entry?.itemId
+        let blast = itemID.flatMap { saved.blasts[$0] }
+        let targets = WantForwarding.recipients(for: event, enabled: saved.forwardActivity, itemAgents: blast?.agents,
+                                                defaults: saved.forwardAgents, sendable: Set(agents.map(\.id)))
+        guard !targets.isEmpty else { return }
+        if !lists.contains(where: { $0.id == event.listId }) { await reload() }
+        guard let list = lists.first(where: { $0.id == event.listId }), let text = WantPrompt.activity(event, list: list) else { return }
+        let remote = targets.compactMap(AgentControlSend.remoteID)
+        if let id = blast?.comparisonID, app.comparison(id)?.endedAt == nil,
+           await send(.sendShared(conversationID: id, text: text, agentIDs: remote, attachmentIDs: []), quietly: true) != nil { return }
+        if let result = await send(.createConversation(text: text, agentIDs: remote, attachmentIDs: []), quietly: true), let itemID {
+            update { $0.blasts[itemID] = .init(comparisonID: result.conversationID, agents: targets) }
+        }
     }
 
     private func fail(_ error: Error) {

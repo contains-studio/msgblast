@@ -33,6 +33,7 @@ struct WantsView: View {
         .toolbar {
             ToolbarItemGroup {
                 WantsConnectButton()
+                WantsForwardMenu(wants: wants)
                 Menu {
                     Button("Refresh") { Task { await wants.reload() } }
                     Divider()
@@ -321,6 +322,26 @@ private struct WantsAgentPicker: View {
                     .keyboardShortcut(.defaultAction).disabled(chosen.isEmpty)
             }
         }.padding(20).frame(width: 340)
+    }
+}
+
+/// Turns forwarding of new comments and outside suggestions on or off, and picks who gets them
+/// for items that have not been blasted yet.
+private struct WantsForwardMenu: View {
+    @ObservedObject var wants: WantsModel
+    @State private var picking = false
+
+    var body: some View {
+        Toggle(isOn: Binding(get: { wants.saved.forwardActivity }, set: { on in
+            if on && wants.saved.forwardAgents.isEmpty { picking = true } else { wants.setForwarding(on) }
+        })) { Label("Forward Activity", systemImage: "bell.badge") }
+            .help("Send new comments and outside suggestions to your agents")
+            .contextMenu { Button("Choose Agents…") { picking = true } }
+            .sheet(isPresented: $picking) {
+                WantsAgentPicker(title: "Forward new comments and suggestions to", action: "Turn On", agents: wants.agents, initial: wants.saved.forwardAgents) {
+                    wants.setForwarding(true, agents: $0)
+                }
+            }
     }
 }
 
