@@ -95,6 +95,7 @@ test('accepts every explicitly contracted event and permits fixtures only on con
     event({ name: 'operation_result', category: 'reliability', properties: { operation: 'storage', result: 'failure' } }),
     event({ name: 'operation_timing', category: 'performance', properties: { operation: 'setup', duration: 'over_30s', fixture: true } }),
     event({ name: 'message_submitted', category: 'messageCounts', properties: { kind: 'shared', recipientCount: 2, source: 'outsideAgent' } }),
+    event({ name: 'message_submitted', category: 'messageCounts', properties: { kind: 'shared', recipientCount: 2, source: 'wants' } }),
     event({ name: 'operation_result', category: 'reliability', properties: { operation: 'send', result: 'failure', source: 'phone' } }),
     event({ name: 'phone_paired' }), event({ name: 'phone_connected' }),
     event({ name: 'agent_send_result', category: 'reliability', properties: { provider: 'chatgptApp', result: 'uncertain', source: 'mac' } }),

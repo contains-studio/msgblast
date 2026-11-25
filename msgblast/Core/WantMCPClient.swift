@@ -23,8 +23,10 @@ public protocol WantService: Sendable {
     /// The list and its items, every page. Items carry entries only from servers that still send them.
     func list(_ id: String) async throws -> WantList
     func entries(itemID: String) async throws -> [WantEntry]
+    func answer(questionID: String, text: String) async throws
     func comments(listID: String) async throws -> [WantComment]
     func suggestions(listID: String) async throws -> [WantEntry]
+    func addItem(listID: String, text: String) async throws -> WantItem
     /// New events of one type since `cursor` (nil starts from now). `list.activity` is every type.
     func poll(_ type: String, cursor: String?) async throws -> WantEventPage
 }
@@ -82,12 +84,19 @@ public struct WantMCPClient: WantService {
         }
         return entries
     }
+    public func answer(questionID: String, text: String) async throws {
+        _ = try await tool("answer_question", ["question_id": questionID, "answer": text])
+    }
     public func comments(listID: String) async throws -> [WantComment] {
         try decode([WantComment].self, try await tool("get_comments", ["list": listID]), key: "comments")
     }
     public func suggestions(listID: String) async throws -> [WantEntry] {
         struct Row: Decodable { var entry: WantEntry }
         return try decode([Row].self, try await tool("list_pending_suggestions", ["list": listID]), key: "suggestions").map(\.entry)
+    }
+    public func addItem(listID: String, text: String) async throws -> WantItem {
+        let content = try await tool("add_item", ["list": listID, "text": text])
+        return try decode(WantItem.self, (content as? [String: Any])?["item"] ?? content)
     }
 
     public func poll(_ type: String, cursor: String?) async throws -> WantEventPage {

@@ -255,7 +255,7 @@ struct MainView: View {
             if selection == .discover {
                 DiscoverView(model: model).navigationTitle("")
             } else if selection == .wants {
-                WantsView(wants: model.wants).navigationTitle("")
+                WantsView(model: model, wants: model.wants).navigationTitle("")
             } else {
             VStack(spacing: 0) {
                 if model.demo { demoControls }

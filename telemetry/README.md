@@ -46,7 +46,8 @@ PostHog's required distinct ID.
 | `operation_timing` | `performance` | `operation`: send/setup/storage; `duration`: under_1s/1_to_5s/5_to_30s/over_30s |
 
 `source` is `mac` (the Mac's own window), `phone` (the paired iPhone) or
-`outsideAgent` (an outside agent over MCP). `agent_send_result` is one event per
+`outsideAgent` (an outside agent over MCP) or `wants` (the Wants panel: a blast
+for an item, or a forwarded comment or suggestion). `agent_send_result` is one event per
 website, app, CLI or bot agent in a send; Messages contacts are not included.
 `phone_connected` is sent at most once per elapsed cohort day while the phone connects.
 

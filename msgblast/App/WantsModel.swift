@@ -1,22 +1,31 @@
-import Combine
+import AppKit
 import CryptoKit
 import LocalAuthentication
 import Security
 import msgblastCore
+import msgblastRemoteProtocol
 
-/// The Wants panel's state: the person's Want MCP lists, sign-in, and the event feed that keeps
-/// them current.
+/// The Wants panel's state: the person's Want MCP lists, sign-in, the event feed, and the blasts
+/// that ask their agents for offers. Sends run through the same executor as outside agents and
+/// the phone, so they get every readiness and duplicate-send check and are never retried.
 @MainActor final class WantsModel: ObservableObject {
     /// What msgblast remembers between launches, in `wants.json` beside `state.json`.
     struct Saved: Codable, Equatable {
+        struct Blast: Codable, Equatable {
+            var comparisonID: UUID?
+            var agents: [String]
+        }
         /// `events/poll` cursor per event type.
         var cursors: [String: String] = [:]
+        /// The newest blast for each item, so its replies show under it.
+        var blasts: [String: Blast] = [:]
 
         init() {}
         /// Each field is optional on disk, so a file from a build that knew fewer of them still loads.
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             cursors = try c.decodeIfPresent([String: String].self, forKey: .cursors) ?? [:]
+            blasts = try c.decodeIfPresent([String: Blast].self, forKey: .blasts) ?? [:]
         }
     }
     /// Every event type on the lists this credential writes, in one poll.
@@ -32,6 +41,8 @@ import msgblastCore
     /// Each opened item's entries by item id, from `get_item_entries`.
     @Published private(set) var entries: [String: [WantEntry]] = [:]
     @Published private(set) var saved = Saved()
+    @Published private(set) var signingIn = false
+    @Published private(set) var sending = false
     @Published var error: String?
 
     private unowned let app: AppModel
@@ -43,6 +54,8 @@ import msgblastCore
     private var poller: Task<Void, Never>?
     /// Bumped on sign-out so requests still in flight from the old sign-in are discarded.
     private var session = 0
+    private var callback: WantOAuthCallback?
+    private lazy var sends = AgentControlSends(model: app, source: .wants)
     private let keychain: WantKeychain
 
     init(app: AppModel) {
@@ -97,6 +110,27 @@ import msgblastCore
 
     // MARK: Sign-in
 
+    func signIn() async {
+        signingIn = true; error = nil
+        let callback = WantOAuthCallback()
+        self.callback = callback
+        defer { callback.stop(); self.callback = nil; signingIn = false }
+        do {
+            let resource = Self.endpoint
+            let redirect = try await callback.start()
+            let server = try await WantOAuth.discover(resource: resource, hint: nil)
+            let clientID = try await WantOAuth.register(server, redirect: redirect)
+            let pkce = WantOAuth.PKCE()
+            NSWorkspace.shared.open(WantOAuth.authorizeURL(server, clientID: clientID, redirect: redirect, pkce: pkce, resource: resource))
+            let answer = try await callback.wait()
+            NSApp.activate()
+            store(try await WantOAuth.exchange(callback: answer, server: server, clientID: clientID, redirect: redirect, pkce: pkce, resource: resource))
+        } catch is CancellationError {
+        } catch { fail(error) }
+    }
+
+    func cancelSignIn() { callback?.stop() }
+
     /// Returns false when the text is not a write key.
     func useWriteKey(_ text: String) -> Bool {
         guard let credential = WantCredential.writeKey(text) else { return false }
@@ -119,7 +153,17 @@ import msgblastCore
         start()
     }
 
-    private func token() -> String? { credential?.accessToken }
+    /// The bearer token, refreshed first when an OAuth token is about to expire.
+    private func token() async -> String? {
+        guard var credential else { return nil }
+        if let expiry = credential.expiresAt, expiry < Date().addingTimeInterval(60), credential.refreshToken != nil,
+           let next = try? await WantOAuth.refresh(credential, resource: Self.endpoint) {
+            credential = next
+            self.credential = next
+            _ = keychain.save(next)
+        }
+        return credential.accessToken
+    }
 
     /// Loads an item's entries when it is opened, and again when the event feed reports changes.
     func loadEntries(_ item: WantItem) async {
@@ -128,6 +172,59 @@ import msgblastCore
             let loaded = try await service.entries(itemID: item.id)
             if session == self.session { entries[item.id] = loaded }
         } catch { if session == self.session { fail(error) } }
+    }
+
+    // MARK: Items and blasts
+
+    func addItem(_ text: String, to list: WantList) async {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        do {
+            _ = try await service.addItem(listID: list.id, text: text)
+            if let index = lists.firstIndex(where: { $0.id == list.id }) { lists[index] = try await service.list(list.id) }
+        } catch { fail(error) }
+    }
+
+    /// Agents msgblast can send to, by their `msgblast_agents_list` id.
+    var agents: [AgentControlAgent] {
+        app.controlAgents().filter { $0.kind != "report" && $0.visible && AgentControlSend.remoteID($0.id) != nil }
+    }
+
+    func answer(_ question: WantQuestion, with text: String) async {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        do {
+            try await service.answer(questionID: question.id, text: text)
+            await reload()
+        } catch { fail(error) }
+    }
+
+    /// Sends the item to the chosen agents in a new conversation and remembers it for the item.
+    func blast(_ item: WantItem, in list: WantList, to agentIDs: [String]) async {
+        if entries[item.id] == nil { await loadEntries(item) }
+        let prompt = WantPrompt.ask(item: item, list: list, posted: entries[item.id] ?? item.entries ?? [])
+        guard let result = await send(.createConversation(text: prompt, agentIDs: agentIDs.compactMap(AgentControlSend.remoteID), attachmentIDs: [])) else { return }
+        update { $0.blasts[item.id] = .init(comparisonID: result.conversationID, agents: agentIDs) }
+    }
+
+    /// The agents' replies to the newest blast for an item.
+    func replies(for item: WantItem) -> (comparison: UUID, turns: [AgentControlTurn])? {
+        guard let id = saved.blasts[item.id]?.comparisonID, let comparison = app.comparison(id) else { return nil }
+        return (id, app.controlTranscript(comparison).filter { !$0.outgoing })
+    }
+
+    func openConversation(_ id: UUID) { app.coordinator?.open(id) }
+
+    private func send(_ action: RemoteAction) async -> RemoteCommandResult? {
+        sending = true
+        defer { sending = false }
+        let result = await sends.send(RemoteCommand(action: action), client: "Wants")
+        guard result.outcome != .rejected else {
+            let reasons = result.agentReasons.values.sorted()
+            error = ([result.message ?? "msgblast did not send it."] + reasons).joined(separator: " ")
+            return nil
+        }
+        return result
     }
 
     // MARK: Events

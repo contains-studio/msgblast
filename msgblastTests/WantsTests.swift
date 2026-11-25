@@ -119,6 +119,16 @@ final class WantsTests: XCTestCase {
         XCTAssertEqual(page.events.first?.comment?.body, "Folds flat?")
     }
 
+    func testFindOffersPromptLinksTheItemAndWorksWithoutAConnection() throws {
+        let list = try WantJSON.decoder.decode(WantList.self, from: JSONSerialization.data(withJSONObject: listJSON))
+        let first = try XCTUnwrap(list.items?.first)
+        let prompt = WantPrompt.ask(item: first, list: list, posted: first.entries ?? [])
+        XCTAssertTrue(prompt.contains("Link: https://wantmcp.com/l/lst_1#itm_1"))
+        XCTAssertTrue(prompt.contains("get_item_entries"), "connected agents check existing entries first")
+        XCTAssertTrue(prompt.contains("If you are not connected, reply here"))
+        XCTAssertTrue(prompt.contains("- ANC headphones, Example, $249.00"), "unconnected agents still see what is posted")
+    }
+
     private func taskList() throws -> WantList {
         var json = listJSON
         json["format"] = "tasks"; json["visibility"] = "private"
@@ -137,6 +147,19 @@ final class WantsTests: XCTestCase {
         XCTAssertTrue(list.isPrivate)
         XCTAssertEqual(task.entries?.first?.link, "https://example.com/quote")
         XCTAssertEqual(task.claimedBy?.label, "Claude")
+    }
+
+    func testTaskAndResearchListsChangeThePrompt() throws {
+        var list = try taskList()
+        let task = try XCTUnwrap(list.items?.first)
+        let prompt = WantPrompt.ask(item: task, list: list, posted: task.entries ?? [])
+        XCTAssertTrue(prompt.contains("Task: Headphones\nDetails: Saturday, 8am."))
+        XCTAssertTrue(prompt.contains("(private: only I and my connected agents can open it)"))
+        XCTAssertTrue(prompt.contains("set_item_status in_progress"), "the fallback asks agents to claim the task first")
+        XCTAssertTrue(prompt.contains("don't take it over or retry"), "a claim held by another agent is reported, not fought over")
+        XCTAssertTrue(prompt.contains("- ANC headphones\n") || prompt.hasSuffix("- ANC headphones"), "no retailer or price on a task update")
+        list.format = "research"; list.howToWork = "Read the existing answers first."
+        XCTAssertTrue(WantPrompt.ask(item: task, list: list, posted: []).contains("If you are connected to The Want MCP: Read the existing answers first."), "the server's how_to_work wins")
     }
 
     func testCompactListIsPagedAndItemsCarryQuestionsWithoutEntries() async throws {
@@ -175,6 +198,39 @@ final class WantsTests: XCTestCase {
         XCTAssertNil(WantCredential.writeKey("wk_short"))
         XCTAssertNil(WantCredential.writeKey("sk_" + String(repeating: "a", count: 32)))
     }
+
+    func testOAuthDiscoveryAuthorizeURLAndStateCheck() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [WantStub.self]
+        let session = URLSession(configuration: config)
+        WantStub.handler = { request in
+            let json: [String: Any]
+            switch request.url!.path {
+            case "/.well-known/oauth-protected-resource/mcp": json = ["resource": "https://mcp.wantmcp.test/mcp", "authorization_servers": ["https://mcp.wantmcp.test"]]
+            case "/.well-known/oauth-authorization-server":
+                json = ["issuer": "https://mcp.wantmcp.test", "authorization_endpoint": "https://mcp.wantmcp.test/authorize",
+                        "token_endpoint": "https://mcp.wantmcp.test/token", "registration_endpoint": "https://mcp.wantmcp.test/register",
+                        "code_challenge_methods_supported": ["S256"]]
+            default: return (404, [:], Data())
+            }
+            return (200, ["Content-Type": "application/json"], try! JSONSerialization.data(withJSONObject: json))
+        }
+        let server = try await WantOAuth.discover(resource: endpoint, hint: nil, session: session)
+        XCTAssertEqual(server.tokenEndpoint.absoluteString, "https://mcp.wantmcp.test/token")
+        let pkce = WantOAuth.PKCE()
+        let redirect = URL(string: "http://127.0.0.1:5000/callback")!
+        let url = WantOAuth.authorizeURL(server, clientID: "client", redirect: redirect, pkce: pkce, resource: endpoint)
+        let query = Dictionary(uniqueKeysWithValues: URLComponents(url: url, resolvingAgainstBaseURL: false)!.queryItems!.map { ($0.name, $0.value!) })
+        XCTAssertEqual(query["code_challenge_method"], "S256")
+        XCTAssertEqual(query["resource"], endpoint.absoluteString)
+        XCTAssertEqual(query["state"], pkce.state)
+        XCTAssertNotEqual(query["code_challenge"], pkce.verifier)
+        do {
+            _ = try await WantOAuth.exchange(callback: URL(string: "http://127.0.0.1:5000/callback?code=abc&state=wrong")!, server: server,
+                                             clientID: "client", redirect: redirect, pkce: pkce, resource: endpoint, session: session)
+            XCTFail("a mismatched state must be refused")
+        } catch { XCTAssertEqual(error as? WantError, .server("Sign-in did not match this request. Try again.")) }
+    }
 }
 
 /// Runs only against a real server: set WANT_LIVE_MCP (for example http://localhost:8787/mcp) and
@@ -196,6 +252,60 @@ final class WantsLiveTests: XCTestCase {
         _ = try await client.suggestions(listID: list.id)
         if let item = list.items?.first { _ = try await client.entries(itemID: item.id) }
         _ = try await client.poll("list.activity", cursor: nil)
+    }
+
+    /// Adds one item to the key's list.
+    func testAddedItemArrivesAsAnEventOnALiveServer() async throws {
+        let client = try keyed()
+        let ids = try await client.writableListIDs()
+        let id = try XCTUnwrap(ids.first)
+        let start = try await client.poll("list.activity", cursor: nil)
+        let item = try await client.addItem(listID: id, text: "msgblast live test \(UUID().uuidString.prefix(8))")
+        let page = try await client.poll("list.activity", cursor: start.cursor)
+        XCTAssertTrue(page.events.contains { $0.type == "item.created" && $0.item?.id == item.id }, "the new item arrives as an event")
+    }
+
+    /// The parts of sign-in that need no account: discovery, registration and the sign-in page.
+    /// Registers one client named msgblast on the server. Needs only WANT_LIVE_MCP.
+    @MainActor func testSignInChallengeAndOAuthDiscoveryAgainstALiveServer() async throws {
+        guard let raw = ProcessInfo.processInfo.environment["WANT_LIVE_MCP"], let resource = URL(string: raw) else {
+            throw XCTSkip("Set WANT_LIVE_MCP to check sign-in discovery against a live Want MCP server")
+        }
+        let server = try await WantOAuth.discover(resource: resource, hint: nil)
+        XCTAssertTrue(server.requiresIssuer)
+        let callback = WantOAuthCallback()
+        defer { callback.stop() }
+        let redirect = try await callback.start()
+        let clientID = try await WantOAuth.register(server, redirect: redirect)
+        let page = WantOAuth.authorizeURL(server, clientID: clientID, redirect: redirect, pkce: WantOAuth.PKCE(), resource: resource)
+        let (_, response) = try await URLSession.shared.data(from: page)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200, "the sign-in page accepts msgblast's authorization request")
+    }
+
+    /// Also needs WANT_LIVE_OAUTH_DIR: the test writes `authorize-url.txt` there and waits up to five
+    /// minutes for someone to sign in at that URL, whose redirect reaches msgblast's loopback listener.
+    @MainActor func testOAuthSignInAgainstALiveServer() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let raw = env["WANT_LIVE_MCP"], let resource = URL(string: raw), let dir = env["WANT_LIVE_OAUTH_DIR"] else {
+            throw XCTSkip("Set WANT_LIVE_MCP and WANT_LIVE_OAUTH_DIR to sign in against a live Want MCP server")
+        }
+        let callback = WantOAuthCallback()
+        defer { callback.stop() }
+        let redirect = try await callback.start()
+        let server = try await WantOAuth.discover(resource: resource, hint: nil)
+        let clientID = try await WantOAuth.register(server, redirect: redirect)
+        let pkce = WantOAuth.PKCE()
+        let authorize = WantOAuth.authorizeURL(server, clientID: clientID, redirect: redirect, pkce: pkce, resource: resource)
+        try authorize.absoluteString.write(to: URL(fileURLWithPath: dir).appendingPathComponent("authorize-url.txt"), atomically: true, encoding: .utf8)
+        let timeout = Task { try await Task.sleep(for: .seconds(300)); callback.stop() }
+        let answer = try await callback.wait()
+        timeout.cancel()
+        let credential = try await WantOAuth.exchange(callback: answer, server: server, clientID: clientID, redirect: redirect, pkce: pkce, resource: resource)
+        let ids = try await WantMCPClient(endpoint: resource, version: "test") { credential.accessToken }.writableListIDs()
+        XCTAssertFalse(ids.isEmpty, "the grant writes the lists ticked on the consent page")
+        let refreshed = try await WantOAuth.refresh(credential, resource: resource)
+        XCTAssertNotEqual(refreshed.accessToken, credential.accessToken)
+        _ = try await WantMCPClient(endpoint: resource, version: "test") { refreshed.accessToken }.writableListIDs()
     }
 }
 
