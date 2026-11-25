@@ -20,7 +20,10 @@ public enum WantError: Error, Equatable, LocalizedError {
 public protocol WantService: Sendable {
     /// Ids of the lists this credential can write.
     func writableListIDs() async throws -> [String]
+    /// The list and its items, every page. Items carry entries only from servers that still send them.
     func list(_ id: String) async throws -> WantList
+    func entries(itemID: String) async throws -> [WantEntry]
+    func answer(questionID: String, text: String) async throws
     func comments(listID: String) async throws -> [WantComment]
     func suggestions(listID: String) async throws -> [WantEntry]
     func addItem(listID: String, text: String) async throws -> WantItem
@@ -57,7 +60,33 @@ public struct WantMCPClient: WantService {
         guard identity.kind != "anonymous" else { throw WantError.unauthorized(resourceMetadata: nil) }
         return (identity.writableLists ?? []).map(\.id)
     }
-    public func list(_ id: String) async throws -> WantList { try decode(WantList.self, try await tool("get_list", ["list": id])) }
+    public func list(_ id: String) async throws -> WantList {
+        var list: WantList?, cursor: String?
+        for _ in 0..<20 {
+            let content = try await tool("get_list", cursor.map { ["list": id, "cursor": $0] } ?? ["list": id]) as? [String: Any] ?? [:]
+            // The compact read may nest the list's own fields under `list`.
+            let fields = (content["list"] as? [String: Any] ?? [:]).merging(content) { _, page in page }
+            let page = try decode(WantList.self, fields)
+            if var merged = list { merged.items = (merged.items ?? []) + (page.items ?? []); list = merged } else { list = page }
+            cursor = content["next_cursor"] as? String
+            if cursor == nil { break }
+        }
+        guard let list else { throw WantError.invalidResponse }
+        return list
+    }
+    public func entries(itemID: String) async throws -> [WantEntry] {
+        var entries: [WantEntry] = [], cursor: String?
+        for _ in 0..<10 {
+            let content = try await tool("get_item_entries", cursor.map { ["item_id": itemID, "cursor": $0] } ?? ["item_id": itemID])
+            entries += try decode([WantEntry].self, content, key: "entries")
+            cursor = (content as? [String: Any])?["next_cursor"] as? String
+            if cursor == nil { break }
+        }
+        return entries
+    }
+    public func answer(questionID: String, text: String) async throws {
+        _ = try await tool("answer_question", ["question_id": questionID, "answer": text])
+    }
     public func comments(listID: String) async throws -> [WantComment] {
         try decode([WantComment].self, try await tool("get_comments", ["list": listID]), key: "comments")
     }

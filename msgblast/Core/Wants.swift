@@ -37,6 +37,8 @@ public enum WantActor: Codable, Hashable, Sendable {
 
 public struct WantPrice: Codable, Hashable, Sendable {
     public var price: String, currency: String, originalPrice: String?, postedBy: WantActor, postedAt: Date
+    /// Provenance: only a price read on the retailer's own page is verified. Older servers left these out.
+    public var verified: Bool?, checkedAt: Date?
     public var formatted: String { Self.format(price, currency: currency) }
     public var formattedOriginal: String? { originalPrice.flatMap { $0 == price ? nil : Self.format($0, currency: currency) } }
 
@@ -59,14 +61,22 @@ public struct WantEntry: Codable, Hashable, Identifiable, Sendable {
 
 public struct WantItem: Codable, Hashable, Identifiable, Sendable {
     public struct Counts: Codable, Hashable, Sendable { public var listed: Int, suggested: Int }
-    public var id: String, listId: String, text: String, createdBy: WantActor, createdAt: Date
+    public var id: String, text: String
     /// `https://wantmcp.com/l/{list}#itm_...`. Older servers left it out.
     public var url: String?
     public var entryCounts: Counts, commentCount: Int
-    /// `open`, `in_progress` or `done` on servers with list formats.
-    public var details: String?, status: String?, claimedBy: WantActor?
-    /// `get_list` returns each item with its listed entries.
+    /// `open`, `in_progress`, `waiting_on_owner` or `done` on servers with list formats. The compact
+    /// `get_list` sends `details_preview` instead of `details`.
+    public var details: String?, detailsPreview: String?, status: String?, claimedBy: WantActor?
+    /// An agent's question to the person; the item waits on them until it is answered.
+    public var openQuestion: WantQuestion?
+    /// Only the full `get_list` includes entries; otherwise they come from `get_item_entries`.
     public var entries: [WantEntry]?
+}
+
+public struct WantQuestion: Codable, Hashable, Identifiable, Sendable {
+    public struct Answer: Codable, Hashable, Sendable { public var text: String }
+    public var id: String, text: String, options: [String]?, askedBy: WantActor?, answer: Answer?
 }
 
 public struct WantList: Codable, Hashable, Identifiable, Sendable {
@@ -91,6 +101,7 @@ public enum WantFormat: String, Sendable {
     public var entries: String { switch self { case .shopping: "Offers"; case .tasks: "Updates"; case .research: "Answers" } }
     public var finished: String { switch self { case .shopping: "Bought"; case .tasks: "Done"; case .research: "Answered" } }
     public var ask: String { self == .shopping ? "Find Offers" : "Ask Agents" }
+    public static let waiting = "Waiting on you"
 }
 
 public struct WantComment: Codable, Hashable, Identifiable, Sendable {
@@ -101,7 +112,7 @@ public struct WantComment: Codable, Hashable, Identifiable, Sendable {
 public struct WantEvent: Codable, Hashable, Sendable {
     public struct ItemRef: Codable, Hashable, Sendable { public var id: String, text: String }
     public var seq: Int, type: String, listId: String, createdAt: Date, url: String, actor: WantActor
-    public var item: ItemRef?, entry: WantEntry?, comment: WantComment?
+    public var item: ItemRef?, entry: WantEntry?, comment: WantComment?, question: WantQuestion?
 }
 
 public enum WantJSON {
@@ -123,14 +134,16 @@ public enum WantJSON {
 
 /// Which agents hear about new activity on a list.
 public enum WantForwarding {
-    public static let types: Set<String> = ["comment.created", "entry.suggested"]
+    public static let types: Set<String> = ["comment.created", "entry.suggested", "question.answered"]
 
     /// The agents to tell about `event`: the ones last asked about its item, else the chosen
     /// defaults, limited to agents msgblast can send to now. Empty when forwarding is off, for
     /// other event types, and for anything an agent posted, so agents never answer each other in a loop.
+    /// An answer goes only to the agents asked about that item; a new question is for the person, not agents.
     public static func recipients(for event: WantEvent, enabled: Bool, itemAgents: [String]?, defaults: [String], sendable: Set<String>) -> [String] {
         guard enabled, types.contains(event.type), !event.actor.isAgent else { return [] }
-        return (itemAgents ?? defaults).filter(sendable.contains)
+        let targets = event.type == "question.answered" ? itemAgents ?? [] : itemAgents ?? defaults
+        return targets.filter(sendable.contains)
     }
 }
 
@@ -140,9 +153,9 @@ public enum WantPrompt {
 
     /// Asks agents to work one item: find offers, do a task, or answer a question. Connected agents
     /// follow the list's `how_to_work` (or the format's fallback); the rest reply in msgblast.
-    public static func ask(item: WantItem, list: WantList) -> String {
+    public static func ask(item: WantItem, list: WantList, posted entries: [WantEntry]) -> String {
         let format = list.kind
-        let posted = (item.entries ?? []).map { entry in
+        let posted = entries.map { entry in
             ([entry.title] + (entry.retailer.isEmpty ? [] : [entry.retailer]) + (entry.currentPrice.map { [$0.formatted] } ?? [])).joined(separator: ", ")
         }
         let intro = switch format {
@@ -156,13 +169,18 @@ public enum WantPrompt {
         case .tasks: "Claim it with set_item_status in_progress, post progress and results with add_entry, then set_item_status done with a note."
         case .research: "Read the existing answers with get_item_entries first, then post your answer with add_entry and its sources in links."
         }
-        let connected = list.howToWork ?? fallback
+        let rule = switch format {
+        case .shopping: " For each price, say where you saw it (price_source) and when."
+        case .tasks: " If another agent already holds this task, don't take it over or retry: tell me who holds it."
+        case .research: ""
+        }
+        let connected = (list.howToWork ?? fallback) + rule
         let reply = switch format {
         case .shopping: "each offer: product name, retailer, price, product link and image link"
         case .tasks: "your progress and results"
         case .research: "your answer and its sources"
         }
-        let details = (item.details ?? "").isEmpty ? [] : ["Details: \(item.details!)"]
+        let details = (item.details ?? item.detailsPreview).flatMap { $0.isEmpty ? nil : ["Details: \($0)"] } ?? []
         return ([intro, "", "\(format.item): \(item.text)"] + details + [
             "List: \(list.title)",
             "Link: \(list.url(for: item))\(list.isPrivate ? " (private: only I and my connected agents can open it)" : "")",
@@ -194,6 +212,15 @@ public enum WantPrompt {
                 "Link: \(event.url)",
                 "Check whether it is a genuine, better offer than what is listed. Tell me here, and if you are connected to The Want MCP, "
                     + "promote it with promote_suggestion or dismiss it with reject_suggestion.",
+            ].joined(separator: "\n")
+        case "question.answered":
+            guard let question = event.question, let answer = question.answer else { return nil }
+            return [
+                "\(event.actor.label) answered the question on \(want) on my list \"\(list.title)\".",
+                "Question: \(question.text)",
+                "Answer: \(answer.text)",
+                "Link: \(event.url)",
+                "Carry on with the item using this answer.",
             ].joined(separator: "\n")
         default:
             return nil

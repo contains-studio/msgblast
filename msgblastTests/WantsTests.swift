@@ -121,7 +121,8 @@ final class WantsTests: XCTestCase {
 
     func testFindOffersPromptLinksTheItemAndWorksWithoutAConnection() throws {
         let list = try WantJSON.decoder.decode(WantList.self, from: JSONSerialization.data(withJSONObject: listJSON))
-        let prompt = WantPrompt.ask(item: try XCTUnwrap(list.items?.first), list: list)
+        let first = try XCTUnwrap(list.items?.first)
+        let prompt = WantPrompt.ask(item: first, list: list, posted: first.entries ?? [])
         XCTAssertTrue(prompt.contains("Link: https://wantmcp.com/l/lst_1#itm_1"))
         XCTAssertTrue(prompt.contains("get_item_entries"), "connected agents check existing entries first")
         XCTAssertTrue(prompt.contains("If you are not connected, reply here"))
@@ -140,13 +141,56 @@ final class WantsTests: XCTestCase {
         let task = try XCTUnwrap(list.items?.first)
         XCTAssertEqual(task.entries?.first?.link, "https://example.com/quote")
         XCTAssertEqual(task.claimedBy?.label, "Claude")
-        let prompt = WantPrompt.ask(item: task, list: list)
+        let prompt = WantPrompt.ask(item: task, list: list, posted: task.entries ?? [])
         XCTAssertTrue(prompt.contains("Task: Headphones\nDetails: Saturday, 8am."))
         XCTAssertTrue(prompt.contains("(private: only I and my connected agents can open it)"))
         XCTAssertTrue(prompt.contains("set_item_status in_progress"), "the fallback asks agents to claim the task first")
+        XCTAssertTrue(prompt.contains("don't take it over or retry"), "a claim held by another agent is reported, not fought over")
         XCTAssertTrue(prompt.contains("- ANC headphones\n") || prompt.hasSuffix("- ANC headphones"), "no retailer or price on a task update")
         list.format = "research"; list.howToWork = "Read the existing answers first."
-        XCTAssertTrue(WantPrompt.ask(item: task, list: list).contains("If you are connected to The Want MCP: Read the existing answers first."), "the server's how_to_work wins")
+        XCTAssertTrue(WantPrompt.ask(item: task, list: list, posted: []).contains("If you are connected to The Want MCP: Read the existing answers first."), "the server's how_to_work wins")
+    }
+
+    func testCompactListIsPagedAndItemsCarryQuestionsWithoutEntries() async throws {
+        var summary = listJSON; summary["items"] = nil
+        let compact: [String: Any] = ["id": "itm_2", "url": "https://wantmcp.com/l/lst_1#itm_2", "text": "Kettle", "details_preview": "Under £80",
+                                      "status": "waiting_on_owner", "entry_counts": ["listed": 0, "suggested": 0], "comment_count": 0,
+                                      "open_question": ["id": "qst_1", "item_id": "itm_2", "text": "Electric or stovetop?", "options": ["Electric", "Stovetop"],
+                                                        "asked_by": ["kind": "agent", "agent_id": "agt_1", "name": "Claude", "owner_handle": "quiet-otter-4821"],
+                                                        "asked_at": "2026-11-26T08:00:00Z", "answer": NSNull()]]
+        var calls: [[String: Any]] = []
+        WantStub.handler = { request in
+            let arguments = ((try! JSONSerialization.jsonObject(with: WantStub.body(request)) as! [String: Any])["params"] as! [String: Any])["arguments"] as! [String: Any]
+            calls.append(arguments)
+            let page: [String: Any] = arguments["cursor"] == nil ? ["list": summary, "items": [compact], "next_cursor": "p2"] : ["list": summary, "items": [compact], "next_cursor": NSNull()]
+            return self.reply(["structuredContent": page], to: request)
+        }
+        let list = try await client().list("lst_1")
+        XCTAssertEqual(calls.map { $0["cursor"] as? String }, [nil, "p2"])
+        XCTAssertEqual(Set(calls.flatMap(\.keys)), ["list", "cursor"], "only arguments the tool lists")
+        XCTAssertEqual(list.title, "Gifts")
+        XCTAssertEqual(list.items?.count, 2)
+        XCTAssertEqual(list.items?.first?.openQuestion?.options, ["Electric", "Stovetop"])
+        XCTAssertNil(list.items?.first?.entries)
+    }
+
+    func testAnswersGoOnlyToTheItemsAgentsAndPricesCarryProvenance() throws {
+        let event = try WantJSON.decoder.decode(WantEvent.self, from: JSONSerialization.data(withJSONObject: [
+            "seq": 7, "type": "question.answered", "list_id": "lst_1", "created_at": "2026-11-26T09:00:00Z", "url": "https://wantmcp.com/l/lst_1#itm_2",
+            "actor": ["kind": "user", "handle": "quiet-otter-4821"], "item": ["id": "itm_2", "text": "Kettle"],
+            "question": ["id": "qst_1", "text": "Electric or stovetop?", "options": [], "answer": ["text": "Electric", "answered_by": ["kind": "user", "handle": "quiet-otter-4821"], "answered_at": "2026-11-26T09:00:00Z"]],
+        ] as [String: Any]))
+        XCTAssertEqual(WantForwarding.recipients(for: event, enabled: true, itemAgents: nil, defaults: ["web:claude"], sendable: ["web:claude"]), [], "no one was asked about it here")
+        XCTAssertEqual(WantForwarding.recipients(for: event, enabled: true, itemAgents: ["web:claude"], defaults: [], sendable: ["web:claude"]), ["web:claude"])
+        var asked = event; asked.type = "question.asked"
+        XCTAssertEqual(WantForwarding.recipients(for: asked, enabled: true, itemAgents: ["web:claude"], defaults: [], sendable: ["web:claude"]), [], "a new question is for the person")
+        let list = try WantJSON.decoder.decode(WantList.self, from: JSONSerialization.data(withJSONObject: listJSON))
+        XCTAssertTrue(try XCTUnwrap(WantPrompt.activity(event, list: list)).contains("Question: Electric or stovetop?\nAnswer: Electric"))
+        let price = try WantJSON.decoder.decode(WantPrice.self, from: JSONSerialization.data(withJSONObject: [
+            "price": "59.00", "currency": "GBP", "original_price": NSNull(), "posted_by": ["kind": "user", "handle": "x"], "posted_at": "2026-11-26T09:00:00Z",
+            "source": "search", "verified": false, "checked_at": "2026-11-26T08:00:00Z"] as [String: Any]))
+        XCTAssertEqual(price.verified, false)
+        XCTAssertNotNil(price.checkedAt)
     }
 
     func testActivityPromptsQuoteOthersAndSkipOtherEvents() async throws {

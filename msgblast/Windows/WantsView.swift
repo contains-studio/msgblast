@@ -129,6 +129,7 @@ private struct WantsListColumn: View {
     private func progress(_ item: WantItem, _ format: WantFormat) -> String {
         if item.status == "done" { return format.finished }
         if item.status == "in_progress" { return "In progress" }
+        if item.status == "waiting_on_owner" { return WantFormat.waiting }
         let count = item.entryCounts.listed, noun = format.entries.lowercased()
         return count == 0 ? "No \(noun) yet" : count == 1 ? "1 \(noun.dropLast())" : "\(count) \(noun)"
     }
@@ -140,6 +141,8 @@ private struct WantItemDetail: View {
     let item: WantItem
     let list: WantList
     @State private var picking = false
+    @State private var answer = ""
+    private var entries: [WantEntry] { wants.entries[item.id] ?? item.entries ?? [] }
 
     var body: some View {
         ScrollView {
@@ -152,20 +155,21 @@ private struct WantItemDetail: View {
                             if list.isPrivate { Label("Private", systemImage: "lock").foregroundStyle(.secondary) }
                             if let status { Text(status).foregroundStyle(.secondary) }
                         }.font(.callout)
-                        if let details = item.details, !details.isEmpty { Text(details).foregroundStyle(.secondary).textSelection(.enabled) }
+                        if let details = item.details ?? item.detailsPreview, !details.isEmpty { Text(details).foregroundStyle(.secondary).textSelection(.enabled) }
                     }
                     Spacer()
                     Button { picking = true } label: { Label(list.kind.ask, systemImage: "paperplane") }
                         .buttonStyle(.borderedProminent).disabled(wants.sending || !model.canStartNewBlast)
                 }
-                section(list.kind.entries, empty: "No \(list.kind.entries.lowercased()) yet.", rows: item.entries ?? []) { WantEntryRow(entry: $0) }
+                if let question = item.openQuestion { questionCard(question) }
+                section(list.kind.entries, empty: "No \(list.kind.entries.lowercased()) yet.", rows: entries) { WantEntryRow(entry: $0) }
                 let pending = (wants.suggestions[list.id] ?? []).filter { $0.itemId == item.id }
                 if !pending.isEmpty {
                     section("Suggested by outside agents", empty: "", rows: pending) { WantEntryRow(entry: $0) }
                     Text("Hidden from others until you or your agents promote them.").font(.caption).foregroundStyle(.secondary)
                 }
                 if let replies = wants.replies(for: item) { repliesSection(replies.comparison, replies.turns) }
-                let comments = (wants.comments[list.id] ?? []).filter { comment in comment.targetId == item.id || (item.entries ?? []).contains { $0.id == comment.targetId } }
+                let comments = (wants.comments[list.id] ?? []).filter { comment in comment.targetId == item.id || entries.contains { $0.id == comment.targetId } }
                 section("Comments", empty: "No comments.", rows: comments) { comment in
                     VStack(alignment: .leading, spacing: 3) {
                         byline(comment.author, comment.createdAt)
@@ -174,6 +178,7 @@ private struct WantItemDetail: View {
                 }
             }.padding(24).frame(maxWidth: 760, alignment: .leading)
         }
+        .task(id: item.id) { await wants.loadEntries(item) }
         .sheet(isPresented: $picking) {
             WantsAgentPicker(title: list.kind == .shopping ? "Find offers with" : "Ask", action: "Send", agents: wants.agents,
                              initial: wants.saved.blasts[item.id]?.agents ?? wants.agents.filter(\.selected).map(\.id)) { chosen in
@@ -189,6 +194,31 @@ private struct WantItemDetail: View {
         case "done": list.kind.finished
         default: nil
         }
+    }
+
+    /// An agent's question, waiting on the person: one tap for an offered option, or a typed answer.
+    private func questionCard(_ question: WantQuestion) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(WantFormat.waiting, systemImage: "questionmark.bubble").font(.headline).foregroundStyle(.orange)
+            Text(question.text).textSelection(.enabled)
+            if let asker = question.askedBy { Text("Asked by \(asker.label)").font(.caption).foregroundStyle(.secondary) }
+            HStack {
+                ForEach(question.options ?? [], id: \.self) { option in
+                    Button(option) { Task { await wants.answer(question, with: option) } }
+                }
+            }
+            HStack {
+                TextField("Answer", text: $answer).textFieldStyle(.roundedBorder).onSubmit(send)
+                Button("Answer", action: send).disabled(answer.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }.padding(14).background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func send() {
+        guard let question = item.openQuestion else { return }
+        let text = answer
+        answer = ""
+        Task { await wants.answer(question, with: text) }
     }
 
     private func repliesSection(_ id: UUID, _ turns: [AgentControlTurn]) -> some View {
@@ -241,6 +271,8 @@ private struct WantEntryRow: View {
                     if let price = entry.currentPrice {
                         Text(price.formatted).fontWeight(.semibold)
                         if let was = price.formattedOriginal { Text(was).strikethrough().foregroundStyle(.secondary) }
+                        if price.verified == false { Text("unverified").font(.caption).foregroundStyle(.orange) }
+                        if let checked = price.checkedAt { Text("checked \(checked.formatted(.relative(presentation: .named)))").font(.caption).foregroundStyle(.secondary) }
                     }
                 }
                 byline(entry.author, entry.createdAt)

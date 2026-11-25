@@ -15,6 +15,12 @@ with product offers. msgblast is a native MCP client of
   words, shows an item's status and who claimed it, leaves out prices when there
   are none, and marks private lists, whose links open only for their writers.
   Lists from servers without formats are shopping lists.
+- An item **Waiting on you** has a question from an agent. The panel shows it at
+  the top of the item with one-tap options and an answer field (`answer_question`).
+  New questions stay with the person; an answer is forwarded to the agents asked
+  about that item.
+- Prices show "unverified" unless read on the retailer's own page, and when they
+  were checked.
 - **Add a want** adds an item to a list.
 - **Find Offers** (**Ask Agents** on task and research lists) sends the item to
   the agents the person picks, in a new conversation. The prompt carries the
@@ -43,7 +49,9 @@ version, client and capabilities in `_meta`, declaring the
 `io.modelcontextprotocol/events` extension. It reads JSON or a request-scoped SSE
 reply. It uses the tools `whoami` (the lists the credential can write; an anonymous answer
 means the sign-in has ended), `get_list`, `get_comments`,
-`list_pending_suggestions` and `add_item`, and `events/poll` for
+`list_pending_suggestions`, `add_item`, `get_item_entries` (when an item is opened;
+`get_list` is read in pages and carries no entries) and `answer_question`, and
+`events/poll` for
 `list.activity` (every event type on the lists the credential writes), keeping
 its cursor in `wants.json` beside `state.json`. The cursor is saved before an event is
 forwarded, so a crash never forwards it twice. The first poll starts from now.

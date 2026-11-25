@@ -12,7 +12,6 @@ public actor WantFixture: WantService {
 
     public init(now: Date = Date(), activityDelay: TimeInterval = 0) {
         activityAt = now.addingTimeInterval(activityDelay)
-        let me = WantActor.user(handle: "quiet-otter-4821")
         func ago(_ hours: Double) -> Date { now.addingTimeInterval(-hours * 3600) }
         func price(_ value: String, _ by: WantActor, _ hours: Double, was: String? = nil) -> WantPrice {
             WantPrice(price: value, currency: "USD", originalPrice: was, postedBy: by, postedAt: ago(hours))
@@ -22,15 +21,14 @@ public actor WantFixture: WantService {
                       productUrl: "https://example.com/\(id)", imageUrl: nil, retailer: retailer, currentPrice: p, createdAt: ago(hours))
         }
         let claude = WantActor.agent(name: "Claude", ownerHandle: "quiet-otter-4821"), codex = WantActor.agent(name: "Codex", ownerHandle: "quiet-otter-4821")
-        let headphones = WantItem(id: "itm_headphones", listId: "lst_demo", text: "Noise-cancelling headphones for flights, under $300", createdBy: me,
-                                  createdAt: ago(30), entryCounts: .init(listed: 2, suggested: 0), commentCount: 1, entries: [
+        let headphones = WantItem(id: "itm_headphones", text: "Noise-cancelling headphones for flights, under $300", entryCounts: .init(listed: 2, suggested: 0), commentCount: 1, entries: [
             entry("ent_1", "itm_headphones", "Over-ear ANC headphones, 2026 model", "Example Electronics", claude, price("249.00", claude, 2, was: "329.00"), 20),
             entry("ent_2", "itm_headphones", "Travel ANC headphones with case", "Sample Outlet", codex, price("279.99", codex, 5), 6),
         ])
-        let kettle = WantItem(id: "itm_kettle", listId: "lst_demo", text: "A gooseneck kettle with temperature control", createdBy: me,
-                              createdAt: ago(10), entryCounts: .init(listed: 0, suggested: 0), commentCount: 0, entries: [])
-        let van = WantItem(id: "itm_van", listId: "lst_move", text: "Book a van for moving day", createdBy: me, createdAt: ago(8),
-                           entryCounts: .init(listed: 1, suggested: 0), commentCount: 0, details: "Saturday 6 Dec, 8am pickup.", status: "in_progress", claimedBy: codex, entries: [
+        let kettle = WantItem(id: "itm_kettle", text: "A gooseneck kettle with temperature control", entryCounts: .init(listed: 0, suggested: 0),
+                              commentCount: 0, status: "waiting_on_owner", openQuestion: WantQuestion(id: "qst_1", text: "Electric with a hold-temperature setting, or stovetop?",
+                                                                                                      options: ["Electric", "Stovetop"], askedBy: claude, answer: nil), entries: [])
+        let van = WantItem(id: "itm_van", text: "Book a van for moving day", entryCounts: .init(listed: 1, suggested: 0), commentCount: 0, details: "Saturday 6 Dec, 8am pickup.", status: "in_progress", claimedBy: codex, entries: [
             WantEntry(id: "ent_4", itemId: "itm_van", listId: "lst_move", url: "https://wantmcp.com/l/lst_move#ent_4", status: "listed", author: codex,
                       title: "Three quotes, cheapest is £145", productUrl: nil, imageUrl: nil, retailer: "", links: ["https://example.com/vans"], currentPrice: nil, createdAt: ago(1)),
         ])
@@ -55,16 +53,25 @@ public actor WantFixture: WantService {
 
     public func writableListIDs() -> [String] { lists.map(\.id) }
     public func list(_ id: String) throws -> WantList {
-        guard let list = lists.first(where: { $0.id == id }) else { throw WantError.server("List not found") }
+        guard var list = lists.first(where: { $0.id == id }) else { throw WantError.server("List not found") }
+        list.items = list.items?.map { var item = $0; item.entries = nil; return item }
         return list
+    }
+    public func entries(itemID: String) -> [WantEntry] { lists.flatMap { $0.items ?? [] }.first { $0.id == itemID }?.entries ?? [] }
+    public func answer(questionID: String, text: String) {
+        for l in lists.indices {
+            for i in (lists[l].items ?? []).indices where lists[l].items?[i].openQuestion?.id == questionID {
+                lists[l].items?[i].openQuestion = nil
+                lists[l].items?[i].status = "open"
+            }
+        }
     }
     public func comments(listID: String) -> [WantComment] { comments.filter { comment in comment.listId == listID && pending.allSatisfy { $0.comment?.id != comment.id } } }
     public func suggestions(listID: String) -> [WantEntry] { suggested.filter { $0.listId == listID } }
     public func addItem(listID: String, text: String) throws -> WantItem {
         guard let index = lists.firstIndex(where: { $0.id == listID }) else { throw WantError.server("List not found") }
         seq += 1
-        let item = WantItem(id: "itm_\(seq)", listId: listID, text: text, createdBy: .agent(name: "msgblast", ownerHandle: lists[index].ownerHandle),
-                            createdAt: Date(), entryCounts: .init(listed: 0, suggested: 0), commentCount: 0, entries: [])
+        let item = WantItem(id: "itm_\(seq)", text: text, entryCounts: .init(listed: 0, suggested: 0), commentCount: 0, entries: [])
         lists[index].items = (lists[index].items ?? []) + [item]
         lists[index].itemCount += 1
         return item

@@ -32,6 +32,8 @@ import msgblastRemoteProtocol
     @Published private(set) var lists: [WantList] = []
     @Published private(set) var comments: [String: [WantComment]] = [:]
     @Published private(set) var suggestions: [String: [WantEntry]] = [:]
+    /// Each opened item's entries by item id, from `get_item_entries`.
+    @Published private(set) var entries: [String: [WantEntry]] = [:]
     @Published private(set) var saved = Saved()
     @Published private(set) var signingIn = false
     @Published private(set) var sending = false
@@ -88,6 +90,7 @@ import msgblastRemoteProtocol
                 comments[list.id] = try await service.comments(listID: list.id)
                 suggestions[list.id] = try await service.suggestions(listID: list.id)
             }
+            for id in entries.keys { entries[id] = try await service.entries(itemID: id) }
         } catch { fail(error) }
     }
 
@@ -125,7 +128,7 @@ import msgblastRemoteProtocol
     func signOut() {
         poller?.cancel(); poller = nil
         keychain.delete(); credential = nil
-        signedIn = false; lists = []; comments = [:]; suggestions = [:]
+        signedIn = false; lists = []; comments = [:]; suggestions = [:]; entries = [:]
         update { $0.cursors = [:] }
     }
 
@@ -165,8 +168,24 @@ import msgblastRemoteProtocol
     }
 
     /// Sends the item to the chosen agents in a new conversation and remembers it for the item.
+    /// Loads an item's entries when it is opened, and again when the event feed reports changes.
+    func loadEntries(_ item: WantItem) async {
+        do { entries[item.id] = try await service.entries(itemID: item.id) } catch { fail(error) }
+    }
+
+    func answer(_ question: WantQuestion, with text: String) async {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        do {
+            try await service.answer(questionID: question.id, text: text)
+            await reload()
+        } catch { fail(error) }
+    }
+
     func blast(_ item: WantItem, in list: WantList, to agentIDs: [String]) async {
-        guard let result = await send(.createConversation(text: WantPrompt.ask(item: item, list: list), agentIDs: agentIDs.compactMap(AgentControlSend.remoteID), attachmentIDs: [])) else { return }
+        if entries[item.id] == nil { await loadEntries(item) }
+        let prompt = WantPrompt.ask(item: item, list: list, posted: entries[item.id] ?? item.entries ?? [])
+        guard let result = await send(.createConversation(text: prompt, agentIDs: agentIDs.compactMap(AgentControlSend.remoteID), attachmentIDs: [])) else { return }
         update { $0.blasts[item.id] = .init(comparisonID: result.conversationID, agents: agentIDs) }
     }
 
