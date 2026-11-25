@@ -42,7 +42,9 @@ import msgblastRemoteProtocol
     @Published private(set) var entries: [String: [WantEntry]] = [:]
     @Published private(set) var saved = Saved()
     @Published private(set) var signingIn = false
-    @Published private(set) var sending = false
+    /// Sends in flight; a background forward and a blast can overlap.
+    @Published private(set) var sendsInFlight = 0
+    var sending: Bool { sendsInFlight > 0 }
     @Published var error: String?
 
     private unowned let app: AppModel
@@ -55,6 +57,7 @@ import msgblastRemoteProtocol
     /// Bumped on sign-out so requests still in flight from the old sign-in are discarded.
     private var session = 0
     private var callback: WantOAuthCallback?
+    private var refreshing: Task<WantCredential?, Never>?
     private lazy var sends = AgentControlSends(model: app, source: .wants)
     private let keychain: WantKeychain
 
@@ -155,14 +158,18 @@ import msgblastRemoteProtocol
 
     /// The bearer token, refreshed first when an OAuth token is about to expire.
     private func token() async -> String? {
-        guard var credential else { return nil }
-        if let expiry = credential.expiresAt, expiry < Date().addingTimeInterval(60), credential.refreshToken != nil,
-           let next = try? await WantOAuth.refresh(credential, resource: Self.endpoint) {
-            credential = next
-            self.credential = next
-            _ = keychain.save(next)
-        }
-        return credential.accessToken
+        guard let credential else { return nil }
+        guard let expiry = credential.expiresAt, expiry < Date().addingTimeInterval(60), credential.refreshToken != nil else { return credential.accessToken }
+        // One refresh at a time: overlapping calls wait for it, since a rotated refresh token works only once.
+        let refresh = refreshing ?? Task { try? await WantOAuth.refresh(credential, resource: Self.endpoint) }
+        refreshing = refresh
+        let session = self.session
+        let next = await refresh.value
+        refreshing = nil
+        guard let next, session == self.session else { return self.credential?.accessToken }
+        self.credential = next
+        _ = keychain.save(next)
+        return next.accessToken
     }
 
     /// Loads an item's entries when it is opened, and again when the event feed reports changes.
@@ -216,8 +223,8 @@ import msgblastRemoteProtocol
     func openConversation(_ id: UUID) { app.coordinator?.open(id) }
 
     private func send(_ action: RemoteAction) async -> RemoteCommandResult? {
-        sending = true
-        defer { sending = false }
+        sendsInFlight += 1
+        defer { sendsInFlight -= 1 }
         let result = await sends.send(RemoteCommand(action: action), client: "Wants")
         guard result.outcome != .rejected else {
             let reasons = result.agentReasons.values.sorted()
