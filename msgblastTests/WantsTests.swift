@@ -121,11 +121,32 @@ final class WantsTests: XCTestCase {
 
     func testFindOffersPromptLinksTheItemAndWorksWithoutAConnection() throws {
         let list = try WantJSON.decoder.decode(WantList.self, from: JSONSerialization.data(withJSONObject: listJSON))
-        let prompt = WantPrompt.findOffers(item: try XCTUnwrap(list.items?.first), list: list)
+        let prompt = WantPrompt.ask(item: try XCTUnwrap(list.items?.first), list: list)
         XCTAssertTrue(prompt.contains("Link: https://wantmcp.com/l/lst_1#itm_1"))
         XCTAssertTrue(prompt.contains("get_item_entries"), "connected agents check existing entries first")
         XCTAssertTrue(prompt.contains("If you are not connected, reply here"))
-        XCTAssertTrue(prompt.contains("- ANC headphones, Example, $249.00"), "unconnected agents still see what is listed")
+        XCTAssertTrue(prompt.contains("- ANC headphones, Example, $249.00"), "unconnected agents still see what is posted")
+    }
+
+    func testTaskAndResearchListsChangeThePromptAndAllowEntriesWithoutAProduct() throws {
+        var json = listJSON
+        json["format"] = "tasks"; json["visibility"] = "private"
+        var item = (json["items"] as! [[String: Any]])[0]
+        var entry = (item["entries"] as! [[String: Any]])[0]
+        entry["product_url"] = NSNull(); entry["current_price"] = NSNull(); entry["retailer"] = ""; entry["links"] = ["https://example.com/quote"]
+        item["entries"] = [entry]; item["status"] = "in_progress"; item["claimed_by"] = entry["author"]; item["details"] = "Saturday, 8am."
+        json["items"] = [item]
+        var list = try WantJSON.decoder.decode(WantList.self, from: JSONSerialization.data(withJSONObject: json))
+        let task = try XCTUnwrap(list.items?.first)
+        XCTAssertEqual(task.entries?.first?.link, "https://example.com/quote")
+        XCTAssertEqual(task.claimedBy?.label, "Claude")
+        let prompt = WantPrompt.ask(item: task, list: list)
+        XCTAssertTrue(prompt.contains("Task: Headphones\nDetails: Saturday, 8am."))
+        XCTAssertTrue(prompt.contains("(private: only I and my connected agents can open it)"))
+        XCTAssertTrue(prompt.contains("set_item_status in_progress"), "the fallback asks agents to claim the task first")
+        XCTAssertTrue(prompt.contains("- ANC headphones\n") || prompt.hasSuffix("- ANC headphones"), "no retailer or price on a task update")
+        list.format = "research"; list.howToWork = "Read the existing answers first."
+        XCTAssertTrue(WantPrompt.ask(item: task, list: list).contains("If you are connected to The Want MCP: Read the existing answers first."), "the server's how_to_work wins")
     }
 
     func testActivityPromptsQuoteOthersAndSkipOtherEvents() async throws {

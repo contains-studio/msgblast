@@ -10,18 +10,26 @@ with product offers. msgblast is a native MCP client of
 - Shows the signed-in person's lists and items, each item's offers (image,
   retailer, current and original price, who posted it and when), outside
   suggestions (as plain text, never links) and comments.
+- Lists have a format: shopping (wants, offers, bought), tasks (tasks, updates,
+  done) or research (questions, answers, answered). The panel uses the matching
+  words, shows an item's status and who claimed it, leaves out prices when there
+  are none, and marks private lists, whose links open only for their writers.
+  Lists from servers without formats are shopping lists.
 - **Add a want** adds an item to a list.
-- **Find Offers** sends the item to the agents the person picks, in a new
-  conversation. The prompt carries the item's link, tells connected agents to
-  call `get_item_entries` first and post with `add_entry`/`post_price`, and tells
-  unconnected agents to reply in msgblast. It also lists what is already posted.
+- **Find Offers** (**Ask Agents** on task and research lists) sends the item to
+  the agents the person picks, in a new conversation. The prompt carries the
+  item's link and details. Connected agents get the list's `how_to_work` text, or
+  the format's own steps when the server sends none: check existing entries and
+  post offers; claim the task with `set_item_status`, post progress, mark it
+  done; or read the existing answers and post one with sources. Unconnected
+  agents reply in msgblast. It also lists what is already posted.
   Replies show under the item; new entries appear when the event feed reports them.
 - **Forward Activity** (off by default) sends each new comment from a person and
   each new outside suggestion to the agents last asked about that item, in the
   same conversation while it is open, or to the agents chosen when forwarding was
   turned on. Anything an agent posted is never forwarded, so agents cannot loop.
-- **Connect Agents** shows the server URL and the commands to add it to Claude
-  Code and Codex. Each agent needs its own connection to post to a list.
+- **Connect Agents** shows the server URL and links to the setup prompts on
+  wantmcp.com. Each agent needs its own connection to post to a list.
 
 Sends go through the same executor as outside agents and the phone
 (`AgentControlSends`, telemetry source `wants`), so they get the same readiness

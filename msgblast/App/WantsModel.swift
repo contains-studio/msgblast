@@ -166,7 +166,7 @@ import msgblastRemoteProtocol
 
     /// Sends the item to the chosen agents in a new conversation and remembers it for the item.
     func blast(_ item: WantItem, in list: WantList, to agentIDs: [String]) async {
-        guard let result = await send(.createConversation(text: WantPrompt.findOffers(item: item, list: list), agentIDs: agentIDs.compactMap(AgentControlSend.remoteID), attachmentIDs: [])) else { return }
+        guard let result = await send(.createConversation(text: WantPrompt.ask(item: item, list: list), agentIDs: agentIDs.compactMap(AgentControlSend.remoteID), attachmentIDs: [])) else { return }
         update { $0.blasts[item.id] = .init(comparisonID: result.conversationID, agents: agentIDs) }
     }
 

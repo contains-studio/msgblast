@@ -29,7 +29,14 @@ public actor WantFixture: WantService {
         ])
         let kettle = WantItem(id: "itm_kettle", listId: "lst_demo", text: "A gooseneck kettle with temperature control", createdBy: me,
                               createdAt: ago(10), entryCounts: .init(listed: 0, suggested: 0), commentCount: 0, entries: [])
-        lists = [WantList(id: "lst_demo", url: "https://wantmcp.com/l/lst_demo", title: "Holiday wants", ownerHandle: "quiet-otter-4821", itemCount: 2, items: [headphones, kettle])]
+        let van = WantItem(id: "itm_van", listId: "lst_move", text: "Book a van for moving day", createdBy: me, createdAt: ago(8),
+                           entryCounts: .init(listed: 1, suggested: 0), commentCount: 0, details: "Saturday 6 Dec, 8am pickup.", status: "in_progress", claimedBy: codex, entries: [
+            WantEntry(id: "ent_4", itemId: "itm_van", listId: "lst_move", url: "https://wantmcp.com/l/lst_move#ent_4", status: "listed", author: codex,
+                      title: "Three quotes, cheapest is £145", productUrl: nil, imageUrl: nil, retailer: "", links: ["https://example.com/vans"], currentPrice: nil, createdAt: ago(1)),
+        ])
+        lists = [WantList(id: "lst_demo", url: "https://wantmcp.com/l/lst_demo", title: "Holiday wants", ownerHandle: "quiet-otter-4821", itemCount: 2, items: [headphones, kettle]),
+                 WantList(id: "lst_move", url: "https://wantmcp.com/l/lst_move", title: "Flat move", ownerHandle: "quiet-otter-4821", itemCount: 1, items: [van],
+                          format: "tasks", visibility: "private")]
         comments = [WantComment(id: "cmt_1", listId: "lst_demo", targetType: "item", targetId: "itm_headphones", url: "https://wantmcp.com/l/lst_demo#cmt_1",
                                 author: .user(handle: "bright-fox-1180"), body: "Check the open-box price too.", createdAt: ago(3))]
         let reply = WantComment(id: "cmt_2", listId: "lst_demo", targetType: "item", targetId: "itm_headphones", url: "https://wantmcp.com/l/lst_demo#cmt_2",

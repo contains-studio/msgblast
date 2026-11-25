@@ -60,7 +60,7 @@ private struct WantsSignInView: View {
         VStack(spacing: 16) {
             Image(systemName: "gift").font(.system(size: 44)).foregroundStyle(.tint)
             Text("The Want MCP").font(.title2.bold())
-            Text("Keep want lists that your agents fill with the best offers.").foregroundStyle(.secondary)
+            Text("An MCP server for getting what you want.").foregroundStyle(.secondary)
             if wants.signingIn {
                 HStack { ProgressView().controlSize(.small); Text("Finish signing in in your browser.") }
                 Button("Cancel") { wants.cancelSignIn() }
@@ -95,7 +95,7 @@ private struct WantsListColumn: View {
                         ForEach(list.items ?? []) { item in
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(item.text).lineLimit(2)
-                                Text(offerCount(item)).font(.caption).foregroundStyle(.secondary)
+                                Text(progress(item, list.kind)).font(.caption).foregroundStyle(.secondary)
                             }.padding(.vertical, 3).tag(item.id)
                         }
                     }
@@ -123,9 +123,11 @@ private struct WantsListColumn: View {
         draft = ""
         Task { await wants.addItem(text, to: target) }
     }
-    private func offerCount(_ item: WantItem) -> String {
-        let count = item.entryCounts.listed
-        return count == 0 ? "No offers yet" : count == 1 ? "1 offer" : "\(count) offers"
+    private func progress(_ item: WantItem, _ format: WantFormat) -> String {
+        if item.status == "done" { return format.finished }
+        if item.status == "in_progress" { return "In progress" }
+        let count = item.entryCounts.listed, noun = format.entries.lowercased()
+        return count == 0 ? "No \(noun) yet" : count == 1 ? "1 \(noun.dropLast())" : "\(count) \(noun)"
     }
 }
 
@@ -142,13 +144,18 @@ private struct WantItemDetail: View {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(item.text).font(.title2.bold()).textSelection(.enabled)
-                        Link(list.title, destination: URL(string: list.url(for: item))!).font(.callout)
+                        HStack(spacing: 8) {
+                            Link(list.title, destination: URL(string: list.url(for: item))!)
+                            if list.isPrivate { Label("Private", systemImage: "lock").foregroundStyle(.secondary) }
+                            if let status { Text(status).foregroundStyle(.secondary) }
+                        }.font(.callout)
+                        if let details = item.details, !details.isEmpty { Text(details).foregroundStyle(.secondary).textSelection(.enabled) }
                     }
                     Spacer()
-                    Button { picking = true } label: { Label("Find Offers", systemImage: "paperplane") }
+                    Button { picking = true } label: { Label(list.kind.ask, systemImage: "paperplane") }
                         .buttonStyle(.borderedProminent).disabled(wants.sending || !model.canStartNewBlast)
                 }
-                section("Offers", empty: "No offers yet. Ask your agents to find some.", rows: item.entries ?? []) { WantEntryRow(entry: $0) }
+                section(list.kind.entries, empty: "No \(list.kind.entries.lowercased()) yet.", rows: item.entries ?? []) { WantEntryRow(entry: $0) }
                 let pending = (wants.suggestions[list.id] ?? []).filter { $0.itemId == item.id }
                 if !pending.isEmpty {
                     section("Suggested by outside agents", empty: "", rows: pending) { WantEntryRow(entry: $0) }
@@ -165,10 +172,19 @@ private struct WantItemDetail: View {
             }.padding(24).frame(maxWidth: 760, alignment: .leading)
         }
         .sheet(isPresented: $picking) {
-            WantsAgentPicker(title: "Find offers with", action: "Send", agents: wants.agents,
+            WantsAgentPicker(title: list.kind == .shopping ? "Find offers with" : "Ask", action: "Send", agents: wants.agents,
                              initial: wants.saved.blasts[item.id]?.agents ?? wants.agents.filter(\.selected).map(\.id)) { chosen in
                 Task { await wants.blast(item, in: list, to: chosen) }
             }
+        }
+    }
+
+    /// "In progress · Claude" or "Done", from the item's status and who claimed it.
+    private var status: String? {
+        switch item.status {
+        case "in_progress": (["In progress"] + (item.claimedBy.map { [$0.label] } ?? [])).joined(separator: " · ")
+        case "done": list.kind.finished
+        default: nil
         }
     }
 
@@ -208,15 +224,15 @@ private struct WantEntryRow: View {
                 Image(systemName: "shippingbox").font(.title2).foregroundStyle(.tertiary)
             }.frame(width: 64, height: 64).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 3) {
-                if entry.status == "listed", let url = URL(string: entry.productUrl) {
+                if entry.status == "listed", let url = entry.link.flatMap(URL.init(string:)) {
                     Link(entry.title, destination: url).font(.body.weight(.semibold))
                 } else {
                     // Outside suggestions are untrusted: shown as plain text, never as links.
                     Text(entry.title).font(.body.weight(.semibold))
-                    Text(entry.productUrl).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                    Text(entry.link ?? "").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 }
                 HStack(spacing: 6) {
-                    Text(entry.retailer).foregroundStyle(.secondary)
+                    if !entry.retailer.isEmpty { Text(entry.retailer).foregroundStyle(.secondary) }
                     if let price = entry.currentPrice {
                         Text(price.formatted).fontWeight(.semibold)
                         if let was = price.formattedOriginal { Text(was).strikethrough().foregroundStyle(.secondary) }
@@ -301,18 +317,17 @@ private struct WantsConnectButton: View {
             .popover(isPresented: $showing, arrowEdge: .bottom) {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Connect your agents").font(.headline)
-                    Text("Each agent needs its own connection to post offers to your list. Agents that aren't connected reply in msgblast instead.")
+                    Text("Each agent needs its own connection to post to your lists. Agents that aren't connected reply in msgblast instead.")
                         .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    row("MCP server URL", url, note: nil)
-                    row("Claude Code", "claude mcp add --transport http wantmcp \(url)", note: "Copies a Terminal command")
-                    row("Codex", "codex mcp add wantmcp --url \(url)", note: "Copies a Terminal command")
+                    row("MCP server URL", url)
                     Text("ChatGPT and Claude: Settings → Connectors → Add custom connector, then paste the server URL.")
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Link("Setup prompts for Claude Code, Codex and others", destination: URL(string: WantPrompt.connectURL)!).font(.callout)
                 }.padding(18).frame(width: 420)
             }
     }
 
-    private func row(_ title: String, _ value: String, note: String?) -> some View {
+    private func row(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title).font(.subheadline.bold())
             HStack {
@@ -321,9 +336,8 @@ private struct WantsConnectButton: View {
                 Button("Copy") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(value, forType: .string)
-                }.help(note ?? "Copy")
+                }
             }
-            if let note { Text(note).font(.caption2).foregroundStyle(.secondary) }
         }
     }
 }
