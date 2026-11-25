@@ -73,7 +73,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
               url.port == nil || url.port == 443 else { return false }
         let path = url.path
         switch self {
-        case .codexCLI, .claudeCode, .grokbot, .museApp, .grokBotApp, .wabi, .geminiApp, .chatgptApp, .dotsApp, .claudeApp: return false
+        case .sparky, .codexCLI, .claudeCode, .grokbot, .museApp, .grokBotApp, .wabi, .geminiApp, .chatgptApp, .dotsApp, .claudeApp: return false
         case .muse:
             return url.query == nil && url.fragment == nil && (path == "/thread/new" ||
                 path.range(of: #"^/thread/[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$"#, options: .regularExpression) != nil)
@@ -86,7 +86,6 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
         case .alexaShopping:
             let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
             return ["", "/", "/ref=nav_logo", "/ref=nav_signin"].contains(path) && url.fragment == nil && items.allSatisfy { ["ref", "ref_"].contains($0.name) }
-        case .sparky: return false
         case .hark: return url.query == nil && url.fragment == nil && path == "/chat"
         case .os3: return path.isEmpty || path == "/"
         }
