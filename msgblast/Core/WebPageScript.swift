@@ -9,6 +9,13 @@ struct WebPageScript {
         switch provider {
         case .codexCLI, .claudeCode, .grokbot, .museApp, .grokBotApp, .wabi, .geminiApp, .chatgptApp, .dotsApp, .claudeApp: preconditionFailure("Native agents do not use page scripts")
         case .muse: return MusePageScript.helpers
+        case .sparky:
+            return #"""
+            const status = () => ({url:location.href,ready:false,signedIn:null,draft:'',draftAvailable:false,
+                reason:'Sign in to Walmart and open Ask Sparky.'});
+            const inspect = () => ({...status(),messages:[]});
+            const submissionStatus = status;
+            """#
         case .hark:
             // The authenticated layout is not verified. Recognize a chat composer
             // for setup, but never insert text, click Send, or infer receipts.

@@ -1,7 +1,7 @@
 import Foundation
 
 public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
-    case muse, chatgpt, claude, grok, codexCLI, claudeCode, dots, grokbot, os3, hark, alexaShopping, museApp, grokBotApp, wabi, geminiApp, chatgptApp, dotsApp, claudeApp
+    case muse, chatgpt, claude, grok, codexCLI, claudeCode, dots, grokbot, os3, hark, alexaShopping, sparky, museApp, grokBotApp, wabi, geminiApp, chatgptApp, dotsApp, claudeApp
     public static let webDefaults: [Self] = [.muse, .chatgpt, .claude, .grok]
     public static let settingsOnlyWebProviders: [Self] = [.muse, .chatgpt, .claude, .dots, .grok]
     public static let optionalProviders: [Self] = [.codexCLI, .claudeCode]
@@ -12,7 +12,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
         switch self { case .museApp: .muse; case .grokBotApp: .grokBot; case .wabi: .wabi; case .geminiApp: .gemini; case .chatgptApp: .chatgpt; case .dotsApp: .dots; case .claudeApp: .claude; default: nil }
     }
     public var id: String { rawValue }
-    public var supportsSharedSubmissions: Bool { self != .hark }
+    public var supportsSharedSubmissions: Bool { self != .hark && self != .sparky }
     public var usesNativeConversation: Bool { personalAgentProvider != nil || self == .grokbot || desktopApp != nil }
     public var supportsCopies: Bool { [.muse, .chatgpt, .claude, .grok].contains(self) }
     /// Native app authentication is owned by that app. Extra accounts use its website integration.
@@ -24,7 +24,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
         switch self { case .codexCLI: .codex; case .claudeCode: .claude; default: nil }
     }
     public var name: String {
-        switch self { case .muse: "Muse Web"; case .chatgpt: "ChatGPT Web"; case .claude: "Claude Web"; case .grok: "Grok Web"; case .codexCLI: "Codex CLI"; case .claudeCode: "Claude Code"; case .dots: "Dots Web"; case .grokbot: "Grok Bot"; case .os3: "rabbit OS3 Web"; case .hark: "Hark Web"; case .alexaShopping: "Alexa Shopping Web"; case .museApp: "Muse"; case .grokBotApp: "Grok Bot"; case .wabi: "Wabi"; case .geminiApp: "Gemini"; case .chatgptApp: "ChatGPT"; case .dotsApp: "Dots"; case .claudeApp: "Claude" }
+        switch self { case .muse: "Muse Web"; case .chatgpt: "ChatGPT Web"; case .claude: "Claude Web"; case .grok: "Grok Web"; case .codexCLI: "Codex CLI"; case .claudeCode: "Claude Code"; case .dots: "Dots Web"; case .grokbot: "Grok Bot"; case .os3: "rabbit OS3 Web"; case .hark: "Hark Web"; case .alexaShopping: "Alexa Shopping Web"; case .sparky: "Walmart Sparky"; case .museApp: "Muse"; case .grokBotApp: "Grok Bot"; case .wabi: "Wabi"; case .geminiApp: "Gemini"; case .chatgptApp: "ChatGPT"; case .dotsApp: "Dots"; case .claudeApp: "Claude" }
     }
     public var homeURL: URL {
         switch self {
@@ -35,6 +35,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
         case .grok: URL(string: "https://grok.com/")!
         case .grokbot, .grokBotApp: URL(string: "https://x.ai/bot")!
         case .alexaShopping: URL(string: "https://www.amazon.com/")!
+        case .sparky: URL(string: "https://www.walmart.com/")!
         case .hark: URL(string: "https://hark.com/chat")!
         case .geminiApp: URL(string: "https://gemini.google/mac")!
         case .wabi: URL(string: "https://wabi.ai/")!
@@ -85,6 +86,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
         case .alexaShopping:
             let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
             return ["", "/", "/ref=nav_logo", "/ref=nav_signin"].contains(path) && url.fragment == nil && items.allSatisfy { ["ref", "ref_"].contains($0.name) }
+        case .sparky: return false
         case .hark: return url.query == nil && url.fragment == nil && path == "/chat"
         case .os3: return path.isEmpty || path == "/"
         }
