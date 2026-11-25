@@ -1558,7 +1558,7 @@ final class MultiWebAgentTests: XCTestCase {
         try Data("invalid persisted state".utf8).write(to: directory.appendingPathComponent(WebProvider.claude.storageFilename))
         let web = WebAgents(directory: directory, fixture: true)
         web.availableSessions.forEach { $0.connect() }
-        try await waitFor { web.availableSessions.filter { $0.provider != .claude && $0.provider != .hark }.allSatisfy { $0.snapshot.ready } }
+        try await waitFor { web.availableSessions.filter { $0.provider != .claude && $0.provider.supportsSharedSubmissions }.allSatisfy { $0.snapshot.ready } }
         let chatgpt = web.availableSessions[1], claude = web.availableSessions[2]
         _ = try await chatgpt.webView.callAsyncJavaScript("document.querySelector('textarea,[contenteditable]').value = 'Keep this draft'", arguments: [:], in: nil, contentWorld: .page)
         let results = await WebAgents.send("New question", to: web.availableSessions)
