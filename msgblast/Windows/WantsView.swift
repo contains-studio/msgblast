@@ -102,16 +102,19 @@ private struct WantsListColumn: View {
                 }
                 if wants.lists.isEmpty { Text("No lists yet. Create one at wantmcp.com.").foregroundStyle(.secondary) }
             }.listStyle(.sidebar)
+                .onChange(of: selection) { _, item in
+                    if let list = wants.lists.first(where: { $0.items?.contains { $0.id == item } == true }) { listID = list.id }
+                }
             Divider()
             HStack {
-                if wants.lists.count > 1 {
-                    Picker("List", selection: $listID) {
-                        ForEach(wants.lists) { Text($0.title).tag(Optional($0.id)) }
-                    }.labelsHidden().frame(width: 110)
-                }
-                TextField("Add a want", text: $draft).textFieldStyle(.roundedBorder).onSubmit(add)
+                TextField("Add a \(target?.kind.item.lowercased() ?? "want")", text: $draft).textFieldStyle(.roundedBorder).onSubmit(add)
                 Button(action: add) { Image(systemName: "plus") }.disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty || target == nil)
                     .accessibilityLabel("Add Want")
+                if wants.lists.count > 1 {
+                    Menu {
+                        ForEach(wants.lists) { list in Button(list.title) { listID = list.id } }
+                    } label: { Image(systemName: "list.bullet") }.menuStyle(.borderlessButton).fixedSize().help("Add to \(target?.title ?? "")")
+                }
             }.padding(10)
         }
     }
@@ -218,11 +221,13 @@ private struct WantEntryRow: View {
     let entry: WantEntry
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            AsyncImage(url: entry.status == "listed" ? entry.imageUrl.flatMap(URL.init(string:)) : nil) { image in
-                image.resizable().scaledToFit()
-            } placeholder: {
-                Image(systemName: "shippingbox").font(.title2).foregroundStyle(.tertiary)
-            }.frame(width: 64, height: 64).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+            if entry.productUrl != nil {
+                AsyncImage(url: entry.status == "listed" ? entry.imageUrl.flatMap(URL.init(string:)) : nil) { image in
+                    image.resizable().scaledToFit()
+                } placeholder: {
+                    Image(systemName: "shippingbox").font(.title2).foregroundStyle(.tertiary)
+                }.frame(width: 64, height: 64).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+            }
             VStack(alignment: .leading, spacing: 3) {
                 if entry.status == "listed", let url = entry.link.flatMap(URL.init(string:)) {
                     Link(entry.title, destination: url).font(.body.weight(.semibold))
