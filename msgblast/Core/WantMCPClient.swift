@@ -18,7 +18,8 @@ public enum WantError: Error, Equatable, LocalizedError {
 /// What the Wants panel needs from The Want MCP. `WantMCPClient` talks to the live server;
 /// `WantFixture` stands in for Demo and previews.
 public protocol WantService: Sendable {
-    func myLists() async throws -> [WantList]
+    /// Ids of the lists this credential can write.
+    func writableListIDs() async throws -> [String]
     func list(_ id: String) async throws -> WantList
     func comments(listID: String) async throws -> [WantComment]
     func suggestions(listID: String) async throws -> [WantEntry]
@@ -49,7 +50,13 @@ public struct WantMCPClient: WantService {
         self.endpoint = endpoint; self.session = session; self.version = version; self.token = token
     }
 
-    public func myLists() async throws -> [WantList] { try decode([WantList].self, try await tool("my_lists", [:]), key: "lists") }
+    /// From `whoami`. An anonymous answer means the credential is gone, so it is treated as signed out.
+    public func writableListIDs() async throws -> [String] {
+        struct Identity: Decodable { struct Ref: Decodable { var id: String }; var kind: String; var writableLists: [Ref]? }
+        let identity = try decode(Identity.self, try await tool("whoami", [:]))
+        guard identity.kind != "anonymous" else { throw WantError.unauthorized(resourceMetadata: nil) }
+        return (identity.writableLists ?? []).map(\.id)
+    }
     public func list(_ id: String) async throws -> WantList { try decode(WantList.self, try await tool("get_list", ["list": id])) }
     public func comments(listID: String) async throws -> [WantComment] {
         try decode([WantComment].self, try await tool("get_comments", ["list": listID]), key: "comments")

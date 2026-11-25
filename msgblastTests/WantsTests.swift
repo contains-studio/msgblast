@@ -58,14 +58,21 @@ final class WantsTests: XCTestCase {
         XCTAssertEqual(item.entries?.first?.currentPrice?.formatted, "$249.00")
         XCTAssertEqual(item.entries?.first?.currentPrice?.formattedOriginal, "$329.00")
         XCTAssertEqual(item.entries?.first?.author, .agent(name: "Claude", ownerHandle: "quiet-otter-4821"))
-        XCTAssertEqual(list.url(for: item), "https://wantmcp.com/l/lst_1#itm_1")
+        XCTAssertEqual(list.url(for: item), "https://wantmcp.com/l/lst_1#itm_1", "built from the list when the item has no url")
+        var linked = item; linked.url = "https://wantmcp.com/l/lst_1#itm_own"
+        XCTAssertEqual(list.url(for: linked), "https://wantmcp.com/l/lst_1#itm_own")
     }
 
-    func testArrayResultsAreUnwrappedFromStructuredContent() async throws {
-        var summary = listJSON; summary["items"] = nil
-        WantStub.handler = { self.reply(["structuredContent": ["lists": [summary]]], to: $0) }
-        let lists = try await client().myLists()
-        XCTAssertEqual(lists.map(\.id), ["lst_1"])
+    func testWhoamiGivesTheWritableListsAndAnonymousMeansSignedOut() async throws {
+        WantStub.handler = { self.reply(["structuredContent": ["kind": "agent", "actor": ["kind": "agent", "agent_id": "agt_1", "name": "msgblast", "owner_handle": "quiet-otter-4821"],
+                                                              "writable_lists": [["id": "lst_1", "title": "Gifts", "url": "https://wantmcp.com/l/lst_1"]]]], to: $0) }
+        let ids = try await client().writableListIDs()
+        XCTAssertEqual(ids, ["lst_1"])
+        WantStub.handler = { self.reply(["structuredContent": ["kind": "anonymous"]], to: $0) }
+        do {
+            _ = try await client().writableListIDs()
+            XCTFail("an anonymous whoami means the credential no longer works")
+        } catch { XCTAssertEqual(error as? WantError, .unauthorized(resourceMetadata: nil)) }
     }
 
     func testStreamedResponseAndToolErrors() async throws {
@@ -85,7 +92,7 @@ final class WantsTests: XCTestCase {
             (401, ["WWW-Authenticate": #"Bearer resource_metadata="https://mcp.wantmcp.test/.well-known/oauth-protected-resource/mcp""#], Data())
         }
         do {
-            _ = try await client(token: nil).myLists()
+            _ = try await client(token: nil).addItem(listID: "lst_1", text: "x")
             XCTFail("expected an error")
         } catch {
             XCTAssertEqual(error as? WantError, .unauthorized(resourceMetadata: URL(string: "https://mcp.wantmcp.test/.well-known/oauth-protected-resource/mcp")))
@@ -202,8 +209,8 @@ final class WantsLiveTests: XCTestCase {
             throw XCTSkip("Set WANT_LIVE_MCP and WANT_LIVE_KEY to run against a live Want MCP server")
         }
         let client = WantMCPClient(endpoint: endpoint, version: "test") { key }
-        let lists = try await client.myLists()
-        let list = try await client.list(try XCTUnwrap(lists.first).id)
+        let ids = try await client.writableListIDs()
+        let list = try await client.list(try XCTUnwrap(ids.first))
         _ = try await client.comments(listID: list.id)
         _ = try await client.suggestions(listID: list.id)
         let start = try await client.poll("list.activity", cursor: nil)
@@ -219,8 +226,9 @@ final class WantsLiveTests: XCTestCase {
             throw XCTSkip("Set WANT_LIVE_MCP to check sign-in discovery against a live Want MCP server")
         }
         var challenge: URL?
-        do { _ = try await WantMCPClient(endpoint: resource, version: "test") { nil }.myLists() } catch WantError.unauthorized(let hint) { challenge = hint }
-        let hint = try XCTUnwrap(challenge, "my_lists without a credential gets the auth challenge")
+        do { _ = try await WantMCPClient(endpoint: resource, version: "test") { nil }.addItem(listID: "nonexistent", text: "x") }
+        catch WantError.unauthorized(let hint) { challenge = hint }
+        let hint = try XCTUnwrap(challenge, "a write tool without a credential gets the auth challenge")
         let server = try await WantOAuth.discover(resource: resource, hint: hint)
         XCTAssertTrue(server.requiresIssuer)
         let callback = WantOAuthCallback()
@@ -251,11 +259,11 @@ final class WantsLiveTests: XCTestCase {
         let answer = try await callback.wait()
         timeout.cancel()
         let credential = try await WantOAuth.exchange(callback: answer, server: server, clientID: clientID, redirect: redirect, pkce: pkce, resource: resource)
-        let lists = try await WantMCPClient(endpoint: resource, version: "test") { credential.accessToken }.myLists()
-        XCTAssertFalse(lists.isEmpty, "the grant writes the lists ticked on the consent page")
+        let ids = try await WantMCPClient(endpoint: resource, version: "test") { credential.accessToken }.writableListIDs()
+        XCTAssertFalse(ids.isEmpty, "the grant writes the lists ticked on the consent page")
         let refreshed = try await WantOAuth.refresh(credential, resource: resource)
         XCTAssertNotEqual(refreshed.accessToken, credential.accessToken)
-        _ = try await WantMCPClient(endpoint: resource, version: "test") { refreshed.accessToken }.myLists()
+        _ = try await WantMCPClient(endpoint: resource, version: "test") { refreshed.accessToken }.writableListIDs()
     }
 }
 

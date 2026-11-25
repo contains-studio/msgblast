@@ -33,7 +33,8 @@ and duplicate-send checks and are never retried.
 `MCP-Protocol-Version`, `Mcp-Method` and `Mcp-Name` headers, and the protocol
 version, client and capabilities in `_meta`, declaring the
 `io.modelcontextprotocol/events` extension. It reads JSON or a request-scoped SSE
-reply. It uses the tools `my_lists`, `get_list`, `get_comments`,
+reply. It uses the tools `whoami` (the lists the credential can write; an anonymous answer
+means the sign-in has ended), `get_list`, `get_comments`,
 `list_pending_suggestions` and `add_item`, and `events/poll` for
 `list.activity` (every event type on the lists the credential writes), keeping
 its cursor in `wants.json` beside `state.json`. The cursor is saved before an event is
@@ -47,8 +48,8 @@ own MCP server does.
 
 **Sign In…** runs OAuth 2.1 authorization code + PKCE (S256) in the default
 browser: protected resource metadata, authorization server metadata, Dynamic
-Client Registration as a native app, a `http://127.0.0.1:<port>/callback`
-loopback redirect, the MCP server as `resource`, and `state`/`iss` checks. The
+Client Registration as a native app with a portless `http://127.0.0.1/callback`
+loopback redirect (the server accepts any port at authorization time), the MCP server as `resource`, and `state`/`iss` checks. The
 person ticks which lists msgblast may write on the server's consent page.
 **Use a Write Key** accepts a `wk_` key for one list. Either credential is stored
 in the data-protection Keychain, one per support folder, and refreshed before it

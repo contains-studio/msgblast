@@ -61,15 +61,22 @@ public enum WantOAuth {
                       requiresIssuer: server["authorization_response_iss_parameter_supported"] as? Bool == true)
     }
 
-    /// Registers msgblast for this sign-in's redirect and returns its client id.
+    /// Registers msgblast and returns its client id. The loopback redirect is registered without its port,
+    /// which the server accepts on any port at authorization time (RFC 8252 section 7.3).
     public static func register(_ server: Server, redirect: URL, session: URLSession = .shared) async throws -> String {
         guard let endpoint = server.registrationEndpoint else { throw WantError.server("The Want MCP does not accept new apps yet.") }
         let body: [String: Any] = ["client_name": "msgblast", "client_uri": "https://github.com/contains-studio/msgblast", "application_type": "native",
-                                   "redirect_uris": [redirect.absoluteString], "grant_types": ["authorization_code", "refresh_token"],
+                                   "redirect_uris": [portless(redirect)], "grant_types": ["authorization_code", "refresh_token"],
                                    "response_types": ["code"], "token_endpoint_auth_method": "none"]
         let json = try await post(endpoint, json: body, session: session)
         guard let id = json["client_id"] as? String else { throw WantError.invalidResponse }
         return id
+    }
+
+    static func portless(_ url: URL) -> String {
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        components.port = nil
+        return components.string!
     }
 
     public struct PKCE: Sendable {

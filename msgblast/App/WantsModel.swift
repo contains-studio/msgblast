@@ -82,7 +82,7 @@ import msgblastRemoteProtocol
     func reload() async {
         do {
             var loaded: [WantList] = []
-            for summary in try await service.myLists() { loaded.append(try await service.list(summary.id)) }
+            for id in try await service.writableListIDs() { loaded.append(try await service.list(id)) }
             lists = loaded
             for list in loaded {
                 comments[list.id] = try await service.comments(listID: list.id)

@@ -57,6 +57,8 @@ public struct WantEntry: Codable, Hashable, Identifiable, Sendable {
 public struct WantItem: Codable, Hashable, Identifiable, Sendable {
     public struct Counts: Codable, Hashable, Sendable { public var listed: Int, suggested: Int }
     public var id: String, listId: String, text: String, createdBy: WantActor, createdAt: Date
+    /// `https://wantmcp.com/l/{list}#itm_...`. Older servers left it out.
+    public var url: String?
     public var entryCounts: Counts, commentCount: Int
     /// `get_list` returns each item with its listed entries.
     public var entries: [WantEntry]?
@@ -66,8 +68,8 @@ public struct WantList: Codable, Hashable, Identifiable, Sendable {
     public var id: String, url: String, title: String, ownerHandle: String, itemCount: Int
     public var items: [WantItem]?
 
-    /// The contract gives items no URL of their own; entries link as `{list url}#{entry id}`, so items do the same.
-    public func url(for item: WantItem) -> String { "\(url)#\(item.id)" }
+    /// The item's own link, or `{list url}#{item id}` when the server left it out.
+    public func url(for item: WantItem) -> String { item.url ?? "\(url)#\(item.id)" }
 }
 
 public struct WantComment: Codable, Hashable, Identifiable, Sendable {

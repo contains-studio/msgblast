@@ -46,7 +46,7 @@ public actor WantFixture: WantService {
         comments.append(reply)
     }
 
-    public func myLists() -> [WantList] { lists }
+    public func writableListIDs() -> [String] { lists.map(\.id) }
     public func list(_ id: String) throws -> WantList {
         guard let list = lists.first(where: { $0.id == id }) else { throw WantError.server("List not found") }
         return list
