@@ -3,7 +3,7 @@ const MAX_BYTES = 32 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const PROVIDERS = new Set(['chatgpt', 'claude', 'grok', 'muse', 'dots', 'os3', 'hark', 'grokbot', 'codexCLI', 'claudeCode', 'openclaw', 'hermes', 'instinct', 'fo', 'szn', 'poke', 'otherMessages', 'outsideClaudeCode', 'outsideCodex', 'outsideCursor', 'outsideGeminiCLI', 'outsideChatGPT', 'outsideClaudeDesktop', 'outsideGrokBot', 'outsideOther',
   // App agents and Alexa Shopping. A key missing here used to cost the whole batch; see handleTelemetry.
-  'chatgptApp', 'claudeApp', 'dotsApp', 'museApp', 'grokBotApp', 'wabi', 'geminiApp', 'alexaShopping']);
+  'chatgptApp', 'claudeApp', 'dotsApp', 'museApp', 'grokBotApp', 'wabi', 'geminiApp', 'alexaShopping', 'sparky']);
 const SCREENS = ['connectors', 'permissions', 'messages', 'agents', 'browserImport', 'providerConnection', 'runtimeSetup', 'feedback'];
 const CONTRACT = {
   onboarding_completed: ['activity', []],
