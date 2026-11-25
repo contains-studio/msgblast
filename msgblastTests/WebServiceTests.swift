@@ -5,6 +5,30 @@ import msgblastRemoteProtocol
 
 @MainActor
 final class WebServiceTests: XCTestCase {
+    func testSparkySignInPromptIgnoresStorefrontInputs() async throws {
+        let page = WKWebView()
+        page.loadHTMLString("""
+            <input type="search" value="Leave this search alone"><button>Sign in</button>
+            <div role="dialog" data-testid="sparky-fab"><button>Sign in</button></div>
+            """, baseURL: WebProvider.sparky.homeURL)
+        try await waitFor { !page.isLoading && page.url == WebProvider.sparky.homeURL }
+        let inspect = WebPageScript(provider: .sparky).inspect
+        func snapshot() async throws -> WebPageSnapshot {
+            let value = try await page.callAsyncJavaScript(inspect, arguments: [:], in: nil, contentWorld: .defaultClient)
+            return try JSONDecoder().decode(WebPageSnapshot.self, from: JSONSerialization.data(withJSONObject: XCTUnwrap(value)))
+        }
+        let signedOut = try await snapshot()
+        XCTAssertEqual(signedOut.signedIn, false)
+        XCTAssertFalse(signedOut.ready)
+        XCTAssertEqual(signedOut.draftAvailable, false)
+        _ = try await page.evaluateJavaScript("document.querySelector('[role=dialog]').hidden = true")
+        let closed = try await snapshot()
+        XCTAssertNil(closed.signedIn)
+        XCTAssertFalse(closed.ready)
+        let search = try await page.evaluateJavaScript("document.querySelector('input').value")
+        XCTAssertEqual(search as? String, "Leave this search alone")
+    }
+
     func testAlexaShoppingSignedOutSetupOpensAmazonSignInInsteadOfTheStorefront() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

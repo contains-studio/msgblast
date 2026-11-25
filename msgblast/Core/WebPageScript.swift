@@ -11,8 +11,12 @@ struct WebPageScript {
         case .muse: return MusePageScript.helpers
         case .sparky:
             return #"""
-            const status = () => ({url:location.href,ready:false,signedIn:null,draft:'',draftAvailable:false,
-                reason:'Sign in to Walmart and open Ask Sparky.'});
+            const status = () => {
+                const login = [...document.querySelectorAll('[role="dialog"][data-testid="sparky-fab"] button')]
+                    .some(b => b.innerText.trim() === 'Sign in' && b.checkVisibility());
+                return {url:location.href,ready:false,signedIn:login ? false : null,draft:'',draftAvailable:false,
+                    reason:login ? 'Sign in using the button in Sparky.' : 'Open Ask Sparky on Walmart.'};
+            };
             const inspect = () => ({...status(),messages:[]});
             const submissionStatus = status;
             """#
