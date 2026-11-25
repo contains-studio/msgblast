@@ -41,6 +41,8 @@ import msgblastCore
     private var credential: WantCredential?
     private var service: WantService!
     private var poller: Task<Void, Never>?
+    /// Bumped on sign-out so requests still in flight from the old sign-in are discarded.
+    private var session = 0
     private let keychain: WantKeychain
 
     init(app: AppModel) {
@@ -75,16 +77,22 @@ import msgblastCore
     }
 
     func reload() async {
+        let session = self.session
         do {
-            var loaded: [WantList] = []
+            var loaded: [WantList] = [], loadedComments: [String: [WantComment]] = [:], loadedSuggestions: [String: [WantEntry]] = [:]
+            var loadedEntries: [String: [WantEntry]] = [:]
             for id in try await service.writableListIDs() { loaded.append(try await service.list(id)) }
-            lists = loaded
             for list in loaded {
-                comments[list.id] = try await service.comments(listID: list.id)
-                suggestions[list.id] = try await service.suggestions(listID: list.id)
+                loadedComments[list.id] = try await service.comments(listID: list.id)
+                loadedSuggestions[list.id] = try await service.suggestions(listID: list.id)
             }
-            for id in entries.keys { entries[id] = try await service.entries(itemID: id) }
-        } catch { fail(error) }
+            for id in entries.keys { loadedEntries[id] = try await service.entries(itemID: id) }
+            guard session == self.session else { return }
+            lists = loaded
+            comments.merge(loadedComments) { $1 }
+            suggestions.merge(loadedSuggestions) { $1 }
+            entries.merge(loadedEntries) { $1 }
+        } catch { if session == self.session { fail(error) } }
     }
 
     // MARK: Sign-in
@@ -98,7 +106,7 @@ import msgblastCore
     }
 
     func signOut() {
-        poller?.cancel(); poller = nil
+        poller?.cancel(); poller = nil; session += 1
         keychain.delete(); credential = nil
         signedIn = false; lists = []; comments = [:]; suggestions = [:]; entries = [:]
         update { $0.cursors = [:] }
@@ -115,24 +123,30 @@ import msgblastCore
 
     /// Loads an item's entries when it is opened, and again when the event feed reports changes.
     func loadEntries(_ item: WantItem) async {
-        do { entries[item.id] = try await service.entries(itemID: item.id) } catch { fail(error) }
+        let session = self.session
+        do {
+            let loaded = try await service.entries(itemID: item.id)
+            if session == self.session { entries[item.id] = loaded }
+        } catch { if session == self.session { fail(error) } }
     }
 
     // MARK: Events
 
     /// One round of `events/poll`. Returns the seconds until the next round.
     private func poll() async -> TimeInterval {
+        let session = self.session
         var delay: TimeInterval = 30, changed = false
         do {
             for _ in 0..<10 {
                 let page = try await service.poll(Self.activity, cursor: saved.cursors[Self.activity])
+                guard session == self.session else { return delay }
                 update { $0.cursors[Self.activity] = page.cursor }
                 changed = changed || !page.events.isEmpty
                 delay = max(page.nextPoll ?? delay, 5)
                 if !page.hasMore { break }
             }
         } catch {
-            fail(error)
+            if session == self.session { fail(error) }
             return 60
         }
         if changed { await reload() }
