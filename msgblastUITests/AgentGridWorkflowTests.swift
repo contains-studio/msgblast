@@ -38,57 +38,47 @@ final class AgentGridWorkflowTests: XCTestCase {
         app.launch()
         app.activate()
         defer { app.terminate() }
+        app.enableFixtureWebsites("claude", "chatgpt", "muse")
         XCTAssertTrue(app.buttons["Edit agents"].waitForExistence(timeout: 10))
+        let muse = app.buttons["Muse Web"]
+        muse.click()
+        XCTAssertEqual(muse.value as? String, "Selected")
         let editor = app.textViews["Shared prompt"]
         editor.click(); editor.typeKey("a", modifierFlags: .command)
         editor.typeText("Keep this draft while I organize agents")
         app.buttons["Edit agents"].click()
         XCTAssertTrue(app.staticTexts["Your agents"].waitForExistence(timeout: 5))
-        app.buttons["Hide Muse"].click()
-        XCTAssertFalse(app.buttons["Hide Muse"].exists)
+        app.buttons["Hide Muse Web"].click()
+        XCTAssertFalse(app.buttons["Hide Muse Web"].exists)
         let search = app.textFields["Search available agents"]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
         app.scrollViews["Agent grid scroll area"].scroll(byDeltaX: 0, deltaY: -1000)
-        search.click(); search.typeText("Grok Bot")
-        XCTAssertTrue(app.buttons["Add Grok Bot"].waitForExistence(timeout: 5))
+        search.click(); search.typeText("Wabi")
+        XCTAssertTrue(app.buttons["Add Wabi"].waitForExistence(timeout: 5))
         capture(app, name: "More agents with per-avatar plus — isolated fixture")
-        app.buttons["Add Grok Bot"].click()
-        XCTAssertTrue(app.buttons["Done setting up Grok Bot"].waitForExistence(timeout: 5))
-        capture(app, name: "New Grok Bot opens onboarding overlay — isolated fixture")
-        app.buttons["Done setting up Grok Bot"].click()
-        XCTAssertTrue(app.buttons["Hide Grok Bot"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["Add Grok Bot"].exists)
-        let added = app.descendants(matching: .any).matching(identifier: "Agent Grok Bot").firstMatch
+        app.buttons["Add Wabi"].click()
+        XCTAssertTrue(app.buttons["Done setting up Wabi"].waitForExistence(timeout: 5))
+        capture(app, name: "New Wabi opens onboarding overlay — isolated fixture")
+        app.buttons["Done setting up Wabi"].click()
+        XCTAssertTrue(app.buttons["Hide Wabi"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Add Wabi"].exists)
+        let added = app.descendants(matching: .any).matching(identifier: "Agent Wabi").firstMatch
         XCTAssertTrue(added.isHittable, "The added first tile must be visible above the input field")
         XCTAssertLessThan(added.frame.maxY, editor.frame.minY)
-        let first = app.descendants(matching: .any).matching(identifier: "Agent ChatGPT").firstMatch
-        let second = app.descendants(matching: .any).matching(identifier: "Agent Claude").firstMatch
-        XCTAssertTrue(first.waitForExistence(timeout: 5))
-        let window = app.windows.firstMatch
-        let origin = window.coordinate(withNormalizedOffset: .zero)
-        let source = origin.withOffset(CGVector(dx: first.frame.midX - window.frame.minX, dy: first.frame.midY - window.frame.minY))
-        let destination = origin.withOffset(CGVector(dx: second.frame.midX - window.frame.minX, dy: second.frame.midY - window.frame.minY))
-        source.press(forDuration: 0.1, thenDragTo: destination, withVelocity: .slow, thenHoldForDuration: 0.1)
-        let moved = NSPredicate { _, _ in
-            let lhs = app.descendants(matching: .any).matching(identifier: "Agent Claude").firstMatch.frame
-            let rhs = app.descendants(matching: .any).matching(identifier: "Agent ChatGPT").firstMatch.frame
-            return lhs.minY < rhs.minY - 5 || (abs(lhs.minY - rhs.minY) < 5 && lhs.minX < rhs.minX)
-        }
-        expectation(for: moved, evaluatedWith: app)
-        waitForExpectations(timeout: 5)
+        moveChatGPTAfterClaude(in: app)
         capture(app, name: "Personalized reordered grid — isolated fixture")
         app.buttons["Done editing agents"].click()
-        XCTAssertTrue(app.buttons["Grok Bot"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["Muse"].exists)
+        XCTAssertTrue(app.buttons["Wabi"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Muse Web"].exists)
         XCTAssertEqual(app.textViews["Shared prompt"].value as? String, "Keep this draft while I organize agents")
-        XCTAssertNotEqual(app.buttons["Grok Bot"].value as? String, "Selected", "Adding a tile must not select a send recipient")
+        XCTAssertNotEqual(app.buttons["Wabi"].value as? String, "Selected", "Adding a tile must not select a send recipient")
         app.buttons["Edit agents"].click()
         app.scrollViews["Agent grid scroll area"].scroll(byDeltaX: 0, deltaY: -1000)
-        search.click(); search.typeText("Muse")
-        XCTAssertTrue(app.buttons["Add Muse"].waitForExistence(timeout: 5))
-        app.buttons["Add Muse"].click()
+        search.click(); search.typeText("Muse Web")
+        XCTAssertTrue(app.buttons["Add Muse Web"].waitForExistence(timeout: 5))
+        app.buttons["Add Muse Web"].click()
         app.buttons["Done editing agents"].click()
-        XCTAssertEqual(app.buttons["Muse"].value as? String, "Not selected", "A hidden agent must stay deselected when restored")
+        XCTAssertEqual(app.buttons["Muse Web"].value as? String, "Not selected", "A hidden agent must stay deselected when restored")
     }
 
     @MainActor
@@ -123,8 +113,9 @@ final class AgentGridWorkflowTests: XCTestCase {
         app.launchArguments = ["--demo", "--isolated-demo"]
         app.launch(); app.activate()
         defer { app.terminate() }
-        XCTAssertTrue(app.buttons["ChatGPT"].waitForExistence(timeout: 10))
-        app.buttons["ChatGPT"].rightClick()
+        app.enableFixtureWebsites("chatgpt")
+        XCTAssertTrue(app.buttons["ChatGPT Web"].waitForExistence(timeout: 10))
+        app.buttons["ChatGPT Web"].rightClick()
         XCTAssertTrue(app.menuItems["Duplicate agent…"].waitForExistence(timeout: 5))
         app.menuItems["Duplicate agent…"].click()
         let name = app.textFields["Agent name"]
@@ -137,13 +128,14 @@ final class AgentGridWorkflowTests: XCTestCase {
         XCTAssertEqual(app.buttons["ChatGPT deep"].value as? String, "Not selected")
         app.buttons["ChatGPT deep"].click()
         XCTAssertEqual(app.buttons["ChatGPT deep"].value as? String, "Selected")
+        XCTAssertEqual(app.buttons["ChatGPT Web"].value as? String, "Not selected")
         app.buttons["ChatGPT deep"].rightClick()
         app.menuItems["Rename…"].click()
         XCTAssertTrue(name.waitForExistence(timeout: 5))
         name.click(); name.typeKey("a", modifierFlags: .command); name.typeText("ChatGPT research")
         app.buttons["Save agent"].click()
         XCTAssertTrue(app.buttons["ChatGPT research"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["ChatGPT"].exists)
+        XCTAssertTrue(app.buttons["ChatGPT Web"].exists)
         XCTAssertFalse(app.buttons["ChatGPT deep"].exists)
         capture(app, name: "Two independently selectable ChatGPT agents — isolated fixture")
     }
@@ -156,10 +148,38 @@ final class AgentGridWorkflowTests: XCTestCase {
         defer { app.terminate() }
         let access = app.switches["enable-messages-history-permission"]
         XCTAssertTrue(access.waitForExistence(timeout: 10))
+        XCTAssertEqual(String(describing: access.value ?? ""), "0")
         XCTAssertFalse(app.buttons["Open Settings"].exists)
+        app.buttons["skip-permissions"].click()
+        XCTAssertTrue(app.buttons["Edit agents"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Cedar"].exists, "Saved Messages contacts stay hidden until history is available")
-        XCTAssertTrue(app.buttons["Add ChatGPT"].exists, "Native apps remain available while Messages access is off")
+        app.buttons["Edit agents"].click()
+        let search = app.textFields["Search available agents"]
+        app.scrollViews["Agent grid scroll area"].scroll(byDeltaX: 0, deltaY: -1000)
+        search.click(); search.typeText("ChatGPT")
+        let add = app.buttons["Add ChatGPT"]
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        XCTAssertTrue(add.isEnabled, "Native apps remain available while Messages access is off")
         capture(app, name: "Messages access toggle with unavailable contacts hidden — isolated fixture")
+    }
+
+    @MainActor
+    private func moveChatGPTAfterClaude(in app: XCUIApplication) {
+        let first = app.descendants(matching: .any).matching(identifier: "Agent ChatGPT Web").firstMatch
+        let second = app.descendants(matching: .any).matching(identifier: "Agent Claude Web").firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 5))
+        let window = app.windows.firstMatch
+        let origin = window.coordinate(withNormalizedOffset: .zero)
+        let source = origin.withOffset(CGVector(dx: first.frame.midX - window.frame.minX, dy: first.frame.midY - window.frame.minY))
+        let destination = origin.withOffset(CGVector(dx: second.frame.midX - window.frame.minX, dy: second.frame.midY - window.frame.minY))
+        source.press(forDuration: 0.1, thenDragTo: destination, withVelocity: .slow, thenHoldForDuration: 0.1)
+        let moved = NSPredicate { _, _ in
+            let lhs = second.frame
+            let rhs = first.frame
+            return lhs.minY < rhs.minY - 5 || (abs(lhs.minY - rhs.minY) < 5 && lhs.minX < rhs.minX)
+        }
+        expectation(for: moved, evaluatedWith: app)
+        waitForExpectations(timeout: 5)
     }
 
     @MainActor

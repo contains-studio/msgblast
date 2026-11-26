@@ -926,7 +926,7 @@ struct AppSettingsView: View {
         case .websites:
             Section("Website accounts") { WebAgentSettingsView(model: model, web: model.webAgents) }
         case .cli:
-            Section { LocalAgentSettingsView(agent: model.personalAgent, web: model.webAgents, busy: model.busy || model.webBroadcastBusy) }
+            Section { LocalAgentSettingsView(model: model, busy: model.busy || model.webBroadcastBusy) }
         case .webhooks:
             Section {
                 Text("Connect Grok Bot routines using a webhook. These connections are separate from the Grok Bot Mac app.")
