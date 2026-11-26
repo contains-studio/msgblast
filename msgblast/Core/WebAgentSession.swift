@@ -1240,24 +1240,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 throw WebSessionFailure.notSent(result?["reason"] as? String ?? "\(provider.name)’s Send control was not clicked.")
             }
             guard result?["clicked"] as? Bool == true else { throw WebSessionFailure.unconfirmed }
-            if cartAction {
-                let added = result?["added"] as? Bool == true && generation == navigationGeneration
-                attempt.status = added ? .observed : .uncertain
-                attempt.detail = added ? "Walmart showed the item in your cart." : "Add was clicked. Check the item in your Walmart cart before taking another action."
-                try store(attempt)
-                await refresh()
-                return attempt
-            }
-            for _ in 0..<20 {
-                try await Task.sleep(for: .milliseconds(250))
-                await refresh()
-                let previous = attempt
-                if observeReceipt(&attempt) { try store(attempt); return attempt }
-                if attempt.receiptContext == nil { break }
-                if attempt != previous { try store(attempt) } // Retain the safely assigned URL while markup is delayed.
-            }
-            attempt.status = .uncertain
-            attempt.detail = "Send was clicked, but a unique outgoing message could not be confirmed. Check \(provider.name); no automatic resend."
+            if try await settleSubmission(&attempt, cartAction: cartAction, added: result?["added"] as? Bool == true, generation: generation) { return attempt }
         } catch {
             if attempt.status == .observed {
                 self.error = "The message appeared in \(provider.name), but its receipt could not be saved. Repair storage before sending again."
@@ -1277,6 +1260,28 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         }
         do { try store(attempt) } catch { self.error = "Could not save the send result. Check \(provider.name) before retrying." }
         return attempt
+    }
+
+    private func settleSubmission(_ attempt: inout WebSendAttempt, cartAction: Bool, added: Bool, generation: Int) async throws -> Bool {
+        if cartAction {
+            let added = added && generation == navigationGeneration
+            attempt.status = added ? .observed : .uncertain
+            attempt.detail = added ? "Walmart showed the item in your cart." : "Add was clicked. Check the item in your Walmart cart before taking another action."
+            try store(attempt)
+            await refresh()
+            return true
+        }
+        for _ in 0..<20 {
+            try await Task.sleep(for: .milliseconds(250))
+            await refresh()
+            let previous = attempt
+            if observeReceipt(&attempt) { try store(attempt); return true }
+            if attempt.receiptContext == nil { break }
+            if attempt != previous { try store(attempt) } // Retain the safely assigned URL while markup is delayed.
+        }
+        attempt.status = .uncertain
+        attempt.detail = "Send was clicked, but a unique outgoing message could not be confirmed. Check \(provider.name); no automatic resend."
+        return false
     }
 
     private func verifyConversationForSend(_ url: URL, comparisonID id: UUID) throws {
