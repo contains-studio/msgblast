@@ -17,8 +17,11 @@ import msgblastRemoteProtocol
         var grantID: UUID?
         /// `events/poll` cursor per event type.
         var cursors: [String: String] = [:]
-        /// The newest blast for each item, so its replies show under it.
+        /// The newest blast for each item, so its replies show and activity goes to the same agents.
         var blasts: [String: Blast] = [:]
+        var forwardedConversations: [String: UUID] = [:]
+        var forwardActivity = false
+        var forwardAgents: [String] = []
 
         init() {}
         /// Each field is optional on disk, so a file from a build that knew fewer of them still loads.
@@ -27,6 +30,9 @@ import msgblastRemoteProtocol
             grantID = try c.decodeIfPresent(UUID.self, forKey: .grantID)
             cursors = try c.decodeIfPresent([String: String].self, forKey: .cursors) ?? [:]
             blasts = try c.decodeIfPresent([String: Blast].self, forKey: .blasts) ?? [:]
+            forwardedConversations = try c.decodeIfPresent([String: UUID].self, forKey: .forwardedConversations) ?? [:]
+            forwardActivity = try c.decodeIfPresent(Bool.self, forKey: .forwardActivity) ?? false
+            forwardAgents = try c.decodeIfPresent([String].self, forKey: .forwardAgents) ?? []
         }
     }
     /// Every event type on the lists this credential writes, in one poll.
@@ -59,11 +65,16 @@ import msgblastRemoteProtocol
     private var reloadPending = false
     /// Bumped on sign-out so requests still in flight from the old sign-in are discarded.
     private var session = 0
+    private var forwardingRevision = 0
     private var callback: WantOAuthCallback?
     private var authorization: Task<Void, Never>?
     private var refreshing: Task<String, Error>?
     private lazy var sends = AgentControlSends(model: app, source: .wants)
     private let keychain: WantKeychain
+    private var forwardingGrant: String { saved.grantID?.uuidString ?? "unbound" }
+    private var forwardingRevoked: Bool {
+        UserDefaults.standard.string(forKey: keychain.forwardingRevocationKey) == forwardingGrant
+    }
 
     init(app: AppModel) {
         self.app = app
@@ -89,6 +100,7 @@ import msgblastRemoteProtocol
             }
             connectService()
         }
+        if forwardingRevoked { saved.forwardActivity = false }
     }
 
     func start() {
@@ -188,8 +200,7 @@ import msgblastRemoteProtocol
         if !app.demo, !keychain.delete() { error = "Signed out on this Mac. The Keychain could not remove the saved key." }
         credential = nil; reloadPending = false; answering = []
         signedIn = false; lists = []; comments = [:]; suggestions = [:]; entries = [:]
-        update { $0 = Saved() }
-        saved = Saved()
+        if !update({ $0 = Saved() }) { saved = Saved() }
     }
 
     @discardableResult private func store(_ grant: WantCredential) -> Bool {
@@ -303,17 +314,18 @@ import msgblastRemoteProtocol
 
     /// The agents' replies to the newest blast for an item.
     func replies(for item: WantItem) -> (comparison: UUID, turns: [AgentControlTurn])? {
-        guard let id = saved.blasts[item.id]?.comparisonID, let comparison = app.comparison(id) else { return nil }
+        guard let id = saved.blasts[item.id]?.comparisonID ?? saved.forwardedConversations[item.id], let comparison = app.comparison(id) else { return nil }
         return (id, app.controlTranscript(comparison).filter { !$0.outgoing })
     }
 
     func openConversation(_ id: UUID) { app.coordinator?.open(id) }
 
-    private func send(_ action: RemoteAction) async -> RemoteCommandResult? {
+    private func send(_ action: RemoteAction, quietly: Bool = false, isAuthorized: @MainActor () -> Bool = { true }) async -> RemoteCommandResult? {
         let generation = session
-        let result = await sends.send(RemoteCommand(action: action), client: "Wants") { self.signedIn && self.session == generation }
+        let result = await sends.send(RemoteCommand(action: action), client: "Wants") { self.signedIn && self.session == generation && isAuthorized() }
         guard session == generation else { return nil }
         guard result.outcome != .rejected else {
+            guard !quietly else { return result }
             let reasons = result.agentReasons.values.sorted()
             error = ([result.message ?? "msgblast did not send it."] + reasons).joined(separator: " ")
             return nil
@@ -326,12 +338,15 @@ import msgblastRemoteProtocol
     /// One round of `events/poll`. Returns the seconds until the next round.
     private func poll() async -> TimeInterval {
         let session = self.session
+        let revision = forwardingRevision
+        var pages: [WantEventPage] = []
         var delay: TimeInterval = 30, changed = reloadPending
         var cursor = saved.cursors[Self.activity]
         do {
             for _ in 0..<10 {
                 let page = try await service.poll(Self.activity, cursor: cursor)
                 guard session == self.session else { return delay }
+                pages.append(page)
                 cursor = page.cursor
                 changed = changed || page.hasActivity
                 delay = max(page.nextPoll ?? delay, 5)
@@ -342,9 +357,62 @@ import msgblastRemoteProtocol
             return 60
         }
         if changed, !(await reload()) { return 60 }
-        guard session == self.session else { return delay }
-        if !update({ $0.cursors[Self.activity] = cursor }) { reloadPending = true }
+        for page in pages {
+            guard session == self.session, await take(page, observedRevision: revision) else { return delay }
+        }
         return delay
+    }
+
+    /// Saves the cursor before forwarding, so a crash mid-send never forwards the same event twice.
+    func take(_ page: WantEventPage, observedRevision: Int? = nil) async -> Bool {
+        let session = self.session
+        let revision = observedRevision ?? forwardingRevision
+        guard let cursor = page.cursor, saved.cursors[Self.activity] != cursor else { return page.events.isEmpty }
+        guard update({ $0.cursors[Self.activity] = cursor }) else { reloadPending = true; return false }
+        for event in page.events {
+            guard session == self.session else { return false }
+            guard saved.forwardActivity, revision == forwardingRevision else { break }
+            await forward(event, session: session, revision: revision)
+        }
+        return session == self.session
+    }
+
+    func setForwarding(_ on: Bool, agents: [String]? = nil) {
+        forwardingRevision += 1
+        if !on { UserDefaults.standard.set(forwardingGrant, forKey: keychain.forwardingRevocationKey) }
+        let persisted = update { saved in
+            saved.forwardActivity = on
+            if let agents { saved.forwardAgents = agents }
+        }
+        if persisted && on { UserDefaults.standard.removeObject(forKey: keychain.forwardingRevocationKey) }
+        if !persisted && !on { saved.forwardActivity = false }
+    }
+
+    private func forward(_ event: WantEvent, session: Int, revision: Int) async {
+        guard let list = lists.first(where: { $0.id == event.listId }), let text = WantPrompt.activity(event, list: list) else { return }
+        let itemID = event.item?.id ?? event.entry?.itemId
+        let asked = itemID.flatMap { saved.blasts[$0] }
+        let targets = WantForwarding.recipients(for: event, enabled: saved.forwardActivity, itemAgents: asked?.agents,
+                                                defaults: saved.forwardAgents, sendable: Set(agents.map(\.id)))
+        let remote = targets.compactMap(AgentControlSend.remoteID)
+        let authorized: @MainActor () -> Bool = {
+            session == self.session && revision == self.forwardingRevision && self.saved.forwardActivity && !self.forwardingRevoked
+                && itemID.flatMap { self.saved.blasts[$0] } == asked
+        }
+        guard !remote.isEmpty, remote.count == targets.count, authorized() else { return }
+        sendsInFlight += 1
+        defer { sendsInFlight -= 1 }
+        if let id = asked?.comparisonID, let comparison = app.comparison(id), comparison.endedAt == nil {
+            let result = await send(.sendShared(conversationID: id, text: text, agentIDs: remote, attachmentIDs: []), quietly: true, isAuthorized: authorized)
+            guard let result, result.outcome == .rejected,
+                  result.code == .unknownConversation || result.code == .conversationEnded, authorized() else { return }
+        }
+        let result = await send(.createConversation(text: text, agentIDs: remote, attachmentIDs: []), quietly: true, isAuthorized: authorized)
+        guard authorized(), let itemID, let id = result?.conversationID, result?.outcome == .applied else { return }
+        update { saved in
+            if asked != nil { saved.blasts[itemID]?.comparisonID = id }
+            else { saved.forwardedConversations[itemID] = id }
+        }
     }
 
     private func fail(_ error: Error) {
@@ -375,6 +443,7 @@ struct WantKeychain {
     let directory: URL
     let endpoint: URL
     private var account: String { SHA256.hash(data: Data(directory.standardizedFileURL.path.utf8)).map { String(format: "%02x", $0) }.joined() }
+    var forwardingRevocationKey: String { "WantMCPForwardingRevoked." + account }
     private var signedOutKey: String { "WantMCPSignedOut." + account }
 
     func read() -> WantCredential? {

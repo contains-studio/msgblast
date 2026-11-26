@@ -1,7 +1,7 @@
 import Foundation
 
 /// Sample want lists for Demo and previews. Never contacts the network. Once `activityDelay` has
-/// passed it delivers one comment and one outside suggestion, so the panel can be seen updating.
+/// passed it delivers one comment and one outside suggestion, so forwarding can be shown.
 public actor WantFixture: WantService {
     private var lists: [WantList]
     private var comments: [WantComment]

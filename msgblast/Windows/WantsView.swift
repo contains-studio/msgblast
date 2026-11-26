@@ -19,26 +19,45 @@ struct WantsView: View {
     }
 
     private var content: some View {
-        HSplitView {
-            WantsListColumn(wants: wants, selection: $selectedItem)
-                .frame(minWidth: 240, idealWidth: 300, maxWidth: 380)
-            Group {
-                if let selected {
-                    WantItemDetail(model: model, wants: wants, item: selected.item, list: selected.list)
-                } else {
-                    ContentUnavailableView("Choose a want", systemImage: "gift", description: Text("Its offers and comments appear here."))
+        GeometryReader { area in
+            if area.size.width >= 640 {
+                HSplitView {
+                    listColumn.frame(minWidth: 200, idealWidth: 240, maxWidth: min(320, area.size.width * 0.36))
+                    detail.frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
                 }
-            }.frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
+            } else if selected != nil {
+                VStack(alignment: .leading, spacing: 0) {
+                    Button { selectedItem = nil } label: { Label("Wants", systemImage: "chevron.backward") }
+                        .buttonStyle(.link).padding(.horizontal, 20).padding(.vertical, 10)
+                    Divider()
+                    detail
+                }
+            } else {
+                listColumn
+            }
         }
         .toolbar {
             ToolbarItemGroup {
                 WantsConnectButton()
+                WantsForwardMenu(wants: wants)
                 Menu {
                     Button("Refresh") { Task { await wants.reload() } }
                     Divider()
                     Button("Sign Out") { wants.signOut() }
                 } label: { Label("More", systemImage: "ellipsis.circle") }
             }
+        }
+    }
+
+    private var listColumn: some View {
+        WantsListColumn(wants: wants, selection: $selectedItem)
+    }
+
+    @ViewBuilder private var detail: some View {
+        if let selected {
+            WantItemDetail(model: model, wants: wants, item: selected.item, list: selected.list)
+        } else {
+            ContentUnavailableView("Choose a want", systemImage: "gift", description: Text("Its offers and comments appear here."))
         }
     }
 
@@ -92,13 +111,20 @@ private struct WantsListColumn: View {
         VStack(spacing: 0) {
             List(selection: $selection) {
                 ForEach(wants.lists) { list in
-                    Section(list.title) {
+                    Section {
                         ForEach(list.items ?? []) { item in
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(item.text).lineLimit(2)
-                                Text(progress(item, list.kind)).font(.caption).foregroundStyle(.secondary)
-                            }.padding(.vertical, 3).tag(item.id)
+                                Text(item.text).fontWeight(.medium).lineLimit(3)
+                                if item.status == "waiting_on_owner" {
+                                    Label(WantFormat.waiting, systemImage: "questionmark.bubble")
+                                        .font(.caption.weight(.medium))
+                                } else {
+                                    Text(progress(item, list.kind)).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }.padding(.vertical, 5).tag(item.id)
                         }
+                    } header: {
+                        Text(list.title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
                     }
                 }
                 if wants.lists.isEmpty { Text("No lists yet. Create one at wantmcp.com.").foregroundStyle(.secondary) }
@@ -151,20 +177,22 @@ private struct WantItemDetail: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(item.text).font(.title2.bold()).textSelection(.enabled)
-                        HStack(spacing: 8) {
-                            if let url = WantJSON.webURL(list.url(for: item)) { Link(list.title, destination: url) } else { Text(list.title) }
-                            if list.isPrivate { Label("Private", systemImage: "lock").foregroundStyle(.secondary) }
-                            if let status { Text(status).foregroundStyle(.secondary) }
-                        }.font(.callout)
-                        if let details = item.details ?? item.detailsPreview, !details.isEmpty { Text(details).foregroundStyle(.secondary).textSelection(.enabled) }
-                    }
-                    Spacer()
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        if let url = WantJSON.webURL(list.url(for: item)) {
+                            Link(list.title, destination: url)
+                        } else {
+                            Text(list.title)
+                        }
+                        if list.isPrivate { Label("Private", systemImage: "lock") }
+                    }.font(.callout).foregroundStyle(.secondary)
+                    Text(item.text).font(.title.bold()).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                    if let status { Text(status).font(.callout).foregroundStyle(.secondary) }
+                    if let details = item.details ?? item.detailsPreview, !details.isEmpty { Text(details).textSelection(.enabled) }
                     Button { picking = true } label: { Label(list.kind.ask, systemImage: "paperplane") }
                         .buttonStyle(.borderedProminent).disabled(wants.sending || !model.canStartNewBlast)
                 }
+                Divider()
                 if let question = item.openQuestion { questionCard(question) }
                 section(list.kind.entries, empty: "No \(list.kind.entries.lowercased()) yet.", rows: entries) { WantEntryRow(entry: $0) }
                 let pending = (wants.suggestions[list.id] ?? []).filter { $0.itemId == item.id }
@@ -184,7 +212,7 @@ private struct WantItemDetail: View {
         }
         .task(id: item.id) { await wants.loadEntries(item) }
         .sheet(isPresented: $picking) {
-            WantsAgentPicker(title: list.kind == .shopping ? "Find offers with" : "Ask", action: "Send", agents: wants.agents,
+            WantsAgentPicker(title: "Choose agents", action: list.kind.ask, agents: wants.agents,
                              initial: wants.saved.blasts[item.id]?.agents ?? wants.agents.filter(\.selected).map(\.id)) { chosen in
                 Task { await wants.blast(item, in: list, to: chosen) }
             }
@@ -211,7 +239,7 @@ private struct WantItemDetail: View {
                 }
             }
             HStack {
-                TextField("Answer", text: Binding(get: { answers[question.id] ?? "" }, set: { answers[question.id] = $0 }))
+                TextField("Or type an answer", text: Binding(get: { answers[question.id] ?? "" }, set: { answers[question.id] = $0 }))
                     .textFieldStyle(.roundedBorder).onSubmit { send(question) }
                 Button("Answer") { send(question) }.disabled((answers[question.id] ?? "").trimmingCharacters(in: .whitespaces).isEmpty)
             }
@@ -255,8 +283,8 @@ private struct WantEntryRow: View {
     let entry: WantEntry
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            if entry.productUrl != nil {
-                AsyncImage(url: entry.status == "listed" ? WantJSON.webURL(entry.imageUrl) : nil) { image in
+            if entry.status == "listed", let image = WantJSON.webURL(entry.imageUrl) {
+                AsyncImage(url: image) { image in
                     image.resizable().scaledToFit()
                 } placeholder: {
                     Image(systemName: "shippingbox").font(.title2).foregroundStyle(.tertiary)
@@ -270,11 +298,13 @@ private struct WantEntryRow: View {
                     Text(entry.title).font(.body.weight(.semibold))
                     Text(entry.link ?? "").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 }
-                HStack(spacing: 6) {
-                    if !entry.retailer.isEmpty { Text(entry.retailer).foregroundStyle(.secondary) }
-                    if let price = entry.currentPrice {
-                        Text(price.formatted).fontWeight(.semibold)
+                if !entry.retailer.isEmpty { Text(entry.retailer).font(.callout).foregroundStyle(.secondary) }
+                if let price = entry.currentPrice {
+                    HStack(spacing: 8) {
+                        Text(price.formatted).font(.headline).monospacedDigit()
                         if let was = price.formattedOriginal { Text(was).strikethrough().foregroundStyle(.secondary) }
+                    }
+                    HStack(spacing: 6) {
                         if !price.isVerified { Text("unverified").font(.caption).foregroundStyle(.orange) }
                         if let checked = price.checkedAt { Text("checked \(checked.formatted(.relative(presentation: .named)))").font(.caption).foregroundStyle(.secondary) }
                     }
@@ -283,6 +313,9 @@ private struct WantEntryRow: View {
             }
             Spacer(minLength: 0)
         }
+        .padding(12)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
+        .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(.separator.opacity(0.5)) }
     }
 }
 
@@ -305,25 +338,57 @@ private struct WantsAgentPicker: View {
 
     init(title: String, action: String, agents: [AgentControlAgent], initial: [String], done: @escaping ([String]) -> Void) {
         self.title = title; self.action = action; self.agents = agents; self.done = done
-        _chosen = State(initialValue: Set(initial).intersection(agents.map(\.id)))
+        _chosen = State(initialValue: Set(initial).intersection(agents.filter { !$0.busy }.map(\.id)))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(title).font(.headline)
             if agents.isEmpty { Text("Connect an agent in msgblast first.").foregroundStyle(.secondary) }
-            ForEach(agents, id: \.id) { agent in
-                Toggle(agent.name, isOn: Binding(get: { chosen.contains(agent.id) }, set: { on in
-                    if on { chosen.insert(agent.id) } else { chosen.remove(agent.id) }
-                })).disabled(agent.busy)
-            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(agents, id: \.id) { agent in
+                        Toggle(isOn: Binding(get: { chosen.contains(agent.id) }, set: { on in
+                            if on { chosen.insert(agent.id) } else { chosen.remove(agent.id) }
+                        })) {
+                            HStack {
+                                Text(agent.name)
+                                if agent.busy { Text("Busy").foregroundStyle(.secondary) }
+                                Spacer()
+                            }.contentShape(Rectangle())
+                        }.disabled(agent.busy)
+                    }
+                }
+            }.frame(height: min(280, CGFloat(agents.count) * 26))
+            Divider()
             HStack {
+                Text("\(chosen.count) selected").font(.callout).foregroundStyle(.secondary)
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(action) { done(agents.map(\.id).filter(chosen.contains)); dismiss() }
                     .keyboardShortcut(.defaultAction).disabled(chosen.isEmpty)
             }
         }.padding(20).frame(width: 340)
+    }
+}
+
+/// Turns forwarding of new comments and outside suggestions on or off, and picks who gets them
+/// for items that have not been blasted yet.
+private struct WantsForwardMenu: View {
+    @ObservedObject var wants: WantsModel
+    @State private var picking = false
+
+    var body: some View {
+        Toggle(isOn: Binding(get: { wants.saved.forwardActivity }, set: { on in
+            if on && wants.saved.forwardAgents.isEmpty { picking = true } else { wants.setForwarding(on) }
+        })) { Label("Forward Activity", systemImage: "bell.badge") }
+            .help("Forward comments, outside suggestions and answers from your lists")
+            .contextMenu { Button("Choose Agents…") { picking = true } }
+            .sheet(isPresented: $picking) {
+                WantsAgentPicker(title: "Choose agents for items you haven’t asked about", action: "Turn On", agents: wants.agents, initial: wants.saved.forwardAgents) {
+                    wants.setForwarding(true, agents: $0)
+                }
+            }
     }
 }
 
