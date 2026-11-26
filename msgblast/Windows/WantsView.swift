@@ -63,7 +63,8 @@ private struct WantsSignInView: View {
                     if wants.useWriteKey(key) { key = "" } else { wants.error = "That isn't a write key. Keys start with wk_." }
                 }.disabled(key.isEmpty)
             }
-            Link("Create a write key on wantmcp.com", destination: URL(string: "https://wantmcp.com/app")!).font(.callout)
+            Text("On wantmcp.com, open a list's settings, then Agents › Add another agent.").font(.callout).foregroundStyle(.secondary)
+            Link("Open wantmcp.com", destination: URL(string: "https://wantmcp.com/app")!).font(.callout)
         }.padding(40).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

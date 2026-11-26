@@ -14,6 +14,7 @@ with product offers. msgblast is a native MCP client of
   done) or research (questions, answers, answered). The panel uses the matching
   words, shows an item's status and who claimed it, leaves out prices when there
   are none, and marks private lists, whose links open only for their writers.
+  New lists start private, shopping lists included.
   Lists from servers without formats are shopping lists.
 - An item **Waiting on you** has a question from an agent. The panel shows it at
   the top of the item.
@@ -43,8 +44,8 @@ own MCP server does.
 
 ## Sign-in and storage
 
-Paste a `wk_` write key from wantmcp.com: it lets msgblast read and write one
-list. It is stored in the data-protection Keychain, one per support folder, and
+Paste a `wk_` write key: on wantmcp.com, a list's settings, **Agents › Add
+another agent**. It lets msgblast read and write that one list. It is stored in the data-protection Keychain, one per support folder, and
 signing out deletes it.
 
 ## Configuration and Demo
