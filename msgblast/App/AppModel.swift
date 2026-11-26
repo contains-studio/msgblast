@@ -122,6 +122,7 @@ final class AppModel: ObservableObject {
     let controlEvents = AgentControlEvents()
     let agentSendActivity = AgentControlActivity()
     lazy var agentSends = AgentControlSends(model: self)
+    lazy var wants = WantsModel(app: self)
     lazy var agentControl = AgentControlListener(directory: local.url.deletingLastPathComponent(), host: self)
     lazy var webAgents = WebAgents(directory: local.url.deletingLastPathComponent(), fixture: demo && Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool != true, websiteOptInRequired: true)
     lazy var webImageCache: WebImageCache = WebImageCache(directory: local.url.deletingLastPathComponent().appendingPathComponent("web-images", isDirectory: true), onChange: { [weak self] in
