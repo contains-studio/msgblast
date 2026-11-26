@@ -403,6 +403,7 @@ struct ConversationView: View {
 
     /// Photos inline (up to 240 pt), other files as a row; both open on tap.
     private func attachmentStack(_ turn: RemoteTurn, mine: Bool) -> some View {
+        let walmart = turn.agentID.flatMap { app.store.projection.agents[$0] }?.product.rawValue == "sparky"
         let files = turn.attachments.enumerated().map { index, file in
             SharedAttachment(turnID: turn.id, index: index, filename: file.filename, mimeType: file.mimeType, byteCount: file.byteCount,
                              agentID: mine ? nil : turn.agentID, date: turn.created)
@@ -411,13 +412,14 @@ struct ConversationView: View {
             ForEach(files) { file in
                 if file.isImage {
                     Button { opening = .photo(file) } label: {
-                        AttachmentThumbnail(app: app, file: file)
+                        AttachmentThumbnail(app: app, file: file, contentMode: walmart ? .fit : .fill)
                             // A website turn is keyed by position; reload when its file changes.
                             .id(turn.attachments[file.index].id)
                             .frame(width: Space.inlinePhoto, height: Space.inlinePhoto * 3 / 4)
                             .clipShape(RoundedRectangle(cornerRadius: Space.cornerBubble, style: .continuous))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(walmart ? "Photo of \(turn.text.components(separatedBy: .newlines).first ?? file.filename)" : file.filename)
                 } else {
                     Button { opening = .document(file) } label: {
                         Label(file.filename, systemImage: "doc").font(.caption).lineLimit(1)

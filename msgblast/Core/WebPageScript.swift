@@ -113,12 +113,25 @@ struct WebPageScript {
             const label=e.querySelector(':scope > div > span.clip')?.textContent.trim();
             return label==='Sent message,' ? 'user' : label==='Received message,' ? 'assistant' : null;
         };
+        const sparkyPhoto = (card,name) => {
+            const candidates=new Set();
+            for (const img of card?.querySelectorAll('img') || []) {
+                const src=img.currentSrc || img.src;
+                if (!src) continue;
+                const photo=new URL(src,location.href);
+                if (photo.origin!=='https://i5.walmartimages.com' || photo.username || photo.password || !/^\/(asr|seo)\//.test(photo.pathname)) continue;
+                if (normalized(img.alt)===name) return photo.href;
+                candidates.add(photo.href);
+            }
+            return candidates.size===1 ? [...candidates][0] : undefined;
+        };
         const sparkyMessage = e => {
             const role=sparkyRole(e),id=e.getAttribute('data-testid');
             if (!role) return [];
             const copy=e.cloneNode(true);
             copy.querySelectorAll('button,[role="button"],time,[role="time"],.clip,svg,style,script').forEach(n=>n.remove());
-            let formattedProducts=false;
+            const productCards=[];
+            const liveCards=[...e.querySelectorAll('[role=group][data-item-id]')];
             for (const table of copy.querySelectorAll('[data-testid="product-comparison-table"] table')) {
                 const [header,...attributes]=table.rows;
                 if (!header) continue;
@@ -127,15 +140,22 @@ struct WebPageScript {
                     if (!link) return [];
                     const url=new URL(link.getAttribute('href'),location.href);
                     if (url.origin!==location.origin || !url.pathname.startsWith('/ip/')) return [];
-                    const lines=[normalized(link.textContent)];
+                    const name=normalized(link.textContent), lines=[name];
+                    const itemID=link.closest('[data-item-id]').getAttribute('data-item-id');
+                    const identified=/^\d+$/.test(itemID) && url.pathname.split('/').filter(Boolean).pop()===itemID;
                     for (const row of attributes) {
                         const name=normalized(row.cells[0]?.textContent||''), value=normalized(row.cells[column]?.textContent||'');
                         if (name && value) lines.push(name+': '+value);
                     }
-                    lines.push(url.origin+url.pathname);
-                    return [lines.join('\n')];
+                    const productURL=url.origin+url.pathname;
+                    lines.push(productURL);
+                    const text=lines.join('\n'), cards=liveCards.filter(card=>card.getAttribute('data-item-id')===itemID);
+                    const card=identified && cards.length===1 ? cards[0] : null;
+                    const action=normalized(card?.querySelector('button[data-automation-id="add-to-cart"]')?.getAttribute('aria-label') || '') || undefined;
+                    productCards.push({name,url:productURL,text,imageURL:sparkyPhoto(card,name),action});
+                    return [text];
                 });
-                if (products.length) { table.replaceWith('\n\n'+products.join('\n\n')+'\n\n'); formattedProducts=true; }
+                if (products.length) table.replaceWith('\n\n'+products.join('\n\n')+'\n\n');
             }
             const links=new Set();
             for (const a of copy.querySelectorAll('a[href]')) {
@@ -147,7 +167,7 @@ struct WebPageScript {
             copy.querySelectorAll('th,td').forEach(n=>n.append(' '));
             const body=copy.textContent.split('\n').map(normalized).join('\n').replace(/\n{3,}/g,'\n\n').trim();
             const text=[body,...links].filter(Boolean).join('\n');
-            return text ? [{id,role,text,...(formattedProducts ? {formattedProducts:true} : {})}] : [];
+            return text ? [{id,role,text,...(productCards.length ? {formattedProducts:true,products:productCards} : {})}] : [];
         };
         const sparkyConversation = () => {
             const turns=all(config.messages).flatMap(sparkyMessage);
@@ -555,9 +575,14 @@ struct WebPageScript {
         #"""
         <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
         <style>:root{color-scheme:light dark;font:16px -apple-system,sans-serif}body{padding:16px}
+        [data-testid="chat-panel"]{box-sizing:border-box;padding:14px;background:Canvas;color:CanvasText}
+        h2{margin:0 0 4px}small,time{font-size:12px;opacity:.7}time{margin-inline-start:6px}
+        #turns>div,#welcome{margin:12px 0}table{width:100%;border-collapse:collapse;table-layout:fixed}
+        td{vertical-align:top;padding:5px;overflow-wrap:anywhere}td:first-child{width:14%}
+        [data-item-id]{display:grid;gap:4px}img{max-width:100%;height:80px;object-fit:contain}
         textarea{box-sizing:border-box;width:100%;font:inherit;padding:10px}button{font:inherit}.clip{position:absolute;clip-path:inset(100%)}</style></head>
-        <body><h2>Ask Sparky</h2><small>Local fixture · simulated Walmart conversation</small>
-        <div id="chat"><div data-testid="sparky-chat-window"><div data-testid="chat-panel">
+        <body><div id="chat"><div data-testid="sparky-chat-window"><div data-testid="chat-panel">
+        <h2>Ask Sparky</h2><small>Local fixture · simulated Walmart conversation</small>
         <div data-testid="message-container"><div data-testid="autoscroll" id="turns"></div></div>
         <div id="welcome"><button aria-label="Compare two reusable water bottles">Compare two reusable water bottles</button>
         <button aria-label="Plan a birthday party">Plan a birthday party</button></div>
@@ -567,6 +592,7 @@ struct WebPageScript {
         <script>
         const input=document.querySelector('textarea'),send=document.querySelector('[aria-label="Send Message"]');
         input.oninput=()=>send.disabled=!input.value.trim();
+        welcome.onclick=event=>{if(event.target.tagName==='BUTTON'){input.value=event.target.innerText;input.oninput();send.click()}};
         function turn(label,text) {
             const row=document.createElement('div'),body=document.createElement('div'),role=document.createElement('span');
             row.dataset.testid=crypto.randomUUID();role.className='clip';role.textContent=label;
@@ -579,14 +605,19 @@ struct WebPageScript {
                 const note=document.createElement('div');note.textContent='Compare sizes below.';reply.append(note);
                 const comparison=document.createElement('div');comparison.dataset.testid='product-comparison-table';
                 const table=document.createElement('table'),header=table.insertRow();header.insertCell();
-                for (const [name,id] of [['Steel bottle','123456'],['Plastic bottle','234567']]) {
+                for (const [name,id,photo] of [['Steel bottle','123456','https://i5.walmartimages.com/seo/Ello-Flip-Fill-32-oz-Stainless-Steel-Water-Bottle-Lavendar_fc9a14dd-82ad-4772-9eb7-a0c22e549a94.4701e8e002c00df04887224613f480b4.jpeg?odnHeight=208&odnWidth=208&odnBg=FFFFFF'],['Plastic bottle','234567','https://i5.walmartimages.com/seo/Athletic-Works-Shaker-Bottle-Gray-24oz_a5217945-e39a-4670-bee1-02d480782840.126984729927113f1c3fc2e3447d2f9e.jpeg?odnHeight=208&odnWidth=208&odnBg=FFFFFF'],['Glass bottle','345678',null]]) {
                     const card=document.createElement('div');card.setAttribute('role','group');card.dataset.itemId=id;
                     const link=document.createElement('a');link.href='/ip/Fixture-bottle/'+id;link.textContent=name;
-                    const add=document.createElement('button');add.dataset.automationId='add-to-cart';add.setAttribute('aria-label','Add to cart - '+name);add.textContent='Add';
+                    const add=document.createElement('button');add.dataset.automationId='add-to-cart';add.setAttribute('aria-label','Add to cart - '+name.replace(' ', '  '));add.textContent='Add';
                     add.onclick=()=>{add.removeAttribute('data-automation-id');add.setAttribute('aria-label','Decrease quantity for '+name);add.textContent='1 in cart'};
-                    card.append(link,add);header.insertCell().append(card);
+                    card.append(link);
+                    if (photo) {
+                        const image=document.createElement('img');image.alt=name;image.src=photo;
+                        card.append(image,add);
+                    }
+                    header.insertCell().append(card);
                 }
-                for (const values of [['Price','$14.96','$13.88'],['Size','26 oz','32 oz']]) {
+                for (const values of [['Price','$14.96','$13.88','$11.00'],['Size','26 oz','32 oz','18 oz']]) {
                     const row=table.insertRow();for (const value of values) row.insertCell().textContent=value;
                 }
                 comparison.append(table);reply.append(comparison);},200);

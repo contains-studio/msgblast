@@ -48,6 +48,7 @@ final class WebServiceTests: XCTestCase {
         XCTAssertNil(session.suggestedPrompts)
         let offer = try XCTUnwrap(session.actionsForComparison(comparison))
         let productReply = try XCTUnwrap(session.messagesForComparison(comparison).last)
+        try verifyWalmartProductPhotos(productReply)
         let text = productReply.text
         XCTAssertTrue(text.contains("lighter.\nCompare sizes below."))
         let legacy = WebPageMessage(id: productReply.id, role: "assistant", text: String(repeating: "Old flattened product card ", count: 40))
@@ -79,6 +80,15 @@ final class WebServiceTests: XCTestCase {
         XCTAssertEqual(stale?.status, .notSent)
         let quantities = try await session.webView.evaluateJavaScript("document.querySelectorAll('[aria-label^=\"Decrease quantity\"]').length")
         XCTAssertEqual(quantities as? Int, 1)
+    }
+
+    private func verifyWalmartProductPhotos(_ productReply: WebPageMessage) throws {
+        let products = try XCTUnwrap(productReply.products)
+        XCTAssertEqual(products.map(\.name), ["Steel bottle", "Plastic bottle", "Glass bottle"])
+        XCTAssertEqual(products.compactMap(\.action), ["Add to cart - Steel bottle", "Add to cart - Plastic bottle"])
+        XCTAssertEqual(products.compactMap(\.imageURL).count, 2)
+        XCTAssertNotEqual(products[0].imageURL, products[1].imageURL)
+        XCTAssertNil(products[2].imageURL)
     }
 
     func testSparkyFreshChatCannotClaimAnOlderComparisonByRepeatingItsQuestion() async throws {

@@ -138,6 +138,39 @@ final class RemoteProjectionTests: XCTestCase {
         XCTAssertNil(RemoteProjectionBuilder.attachmentFiles(from: input)[turnID])
     }
 
+    func testWalmartCardsKeepPhotosAndCurrentActionsWithTheirOwnProducts() throws {
+        var (input, comparison, _) = fixture()
+        let walmart = WebAgentID(provider: .sparky)
+        comparison.setWebAgents([walmart])
+        input.comparisons = [comparison]
+        let products = ["Steel", "Plastic", "Glass"].enumerated().map { index, name in
+            WebShoppingProduct(name: name, url: "https://www.walmart.com/ip/\(index)", text: "\(name) bottle",
+                               imageURL: index < 2 ? "https://i5.walmartimages.com/asr/\(index).jpeg" : nil,
+                               action: index == 2 ? "Add to cart - Steel" : "Add to cart - \(name)")
+        }
+        var reply = WebPageMessage(id: "table", role: "assistant", text: (["Compare these bottles."] + products.map(\.text)).joined(separator: "\n\n"))
+        reply.products = products
+        input.webHistories = [comparison.id: [walmart: [reply]]]
+        var offered = WebPageActions(messageID: "later-reply", labels: ["Add to cart - Steel", "Add to cart - Plastic"])
+        offered.cartChoices = [
+            .init(itemID: "0", messageID: reply.id, label: offered.labels[0]),
+            .init(itemID: "1", messageID: reply.id, label: offered.labels[1])
+        ]
+        input.webActions = [comparison.id: [walmart: offered]]
+        let files = products.prefix(2).map { MessageAttachment(id: $0.name, filename: "product.jpg", path: "/tmp/\($0.name).jpg", mimeType: "image/jpeg") }
+        for index in [1, 0] {
+            input.webImages[try XCTUnwrap(products[index].imageURL)] = files[index]
+            let state = RemoteProjectionBuilder.state(from: input)
+            for (position, product) in products.enumerated() {
+                let turn = try XCTUnwrap(state.turns.first { $0.text == product.text })
+                let expected = position < 2 && (position == 1 || index == 0) ? [files[position]] : []
+                XCTAssertEqual(turn.attachments.map(\.id), expected.map(\.id))
+                XCTAssertEqual(RemoteProjectionBuilder.attachmentFiles(from: input)[turn.id] ?? [], expected)
+                XCTAssertEqual(turn.actions, position < 2 ? [try XCTUnwrap(product.action)] : nil)
+            }
+        }
+    }
+
     func testARenamedConversationProjectsItsName() throws {
         var (input, comparison, _) = fixture()
         XCTAssertEqual(RemoteProjectionBuilder.state(from: input).conversations.first?.title, "Compare approaches")

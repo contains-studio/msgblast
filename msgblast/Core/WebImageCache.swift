@@ -2,16 +2,22 @@ import CryptoKit
 import Foundation
 import os
 
-/// HTTPS Amazon CDN hosts used for Alexa product photos. The page script uses the same allowlist.
+/// Product-photo CDN URLs accepted by the shopping page adapters.
 public enum WebImageURL {
     public static func allowed(_ string: String) -> URL? {
         guard let url = URL(string: string), url.scheme == "https", let host = url.host?.lowercased() else { return nil }
         let amazon = host == "m.media-amazon.com" || host == "images-na.ssl-images-amazon.com" || host.hasSuffix(".media-amazon.com")
-        return amazon ? url : nil
+        return amazon || walmart(string) != nil ? url : nil
+    }
+    public static func walmart(_ string: String) -> URL? {
+        guard let url = URL(string: string), url.scheme == "https", url.host?.lowercased() == "i5.walmartimages.com",
+              url.user == nil, url.password == nil, url.port == nil || url.port == 443,
+              url.path.hasPrefix("/asr/") || url.path.hasPrefix("/seo/") else { return nil }
+        return url
     }
 }
 
-/// Downloads Alexa product images off the send path and remembers failures so a projection refresh does not retry immediately.
+/// Downloads shopping product images off the send path and remembers failures so a projection refresh does not retry immediately.
 @MainActor
 public final class WebImageCache {
     public static let maxByteCount = 2 * 1024 * 1024
@@ -138,10 +144,11 @@ public final class WebImageCache {
     }
 }
 
-/// Drops a redirect that leaves the Amazon image allowlist. The redirect body is then rejected as a non-image.
+/// Drops a redirect that leaves the shopping image allowlist. The redirect body is then rejected as a non-image.
 final class WebImageRedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest) async -> URLRequest? {
-        guard let raw = request.url?.absoluteString, WebImageURL.allowed(raw) != nil else { return nil }
+        guard let raw = request.url?.absoluteString, let source = response.url?.absoluteString, WebImageURL.allowed(raw) != nil,
+              (WebImageURL.walmart(source) != nil) == (WebImageURL.walmart(raw) != nil) else { return nil }
         return request
     }
 }

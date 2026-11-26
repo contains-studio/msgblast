@@ -305,10 +305,19 @@ public struct WebWorkspaceState: Codable, Sendable {
     }
 }
 
+public struct WebShoppingProduct: Codable, Equatable, Sendable {
+    public var name: String
+    public var url: String
+    public var text: String
+    public var imageURL: String?
+    public var action: String?
+}
+
 public struct WebPageMessage: Codable, Equatable, Identifiable, Sendable {
     public var id: String
     public var role: String
     public var text: String
+    public var products: [WebShoppingProduct]?
     var formattedProducts: Bool?
     /// Product photo URLs from an Alexa card. Nil for every other message, including saved history from before images existed.
     public var images: [String]?
@@ -338,6 +347,10 @@ public struct WebPageActions: Codable, Equatable, Sendable {
         var label: String
     }
     var cartChoices: [CartChoice]?
+    public func label(for product: WebShoppingProduct, in reply: String) -> String? {
+        guard let id = URL(string: product.url)?.lastPathComponent else { return nil }
+        return cartChoices?.first { $0.messageID == reply && $0.itemID == id && $0.label == product.action }?.label
+    }
     public func labels(for reply: String) -> [String]? {
         guard let cartChoices else { return messageID == reply ? labels : nil }
         let matching = cartChoices.filter { $0.messageID == reply }.map(\.label)

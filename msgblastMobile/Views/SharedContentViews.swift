@@ -101,13 +101,14 @@ struct QuickLookView: UIViewControllerRepresentable {
 struct AttachmentThumbnail: View {
     @ObservedObject var app: MobileApp
     var file: SharedAttachment
+    var contentMode: ContentMode = .fill
     @State private var image: UIImage?
     @State private var failed = false
     var body: some View {
         ZStack {
             Rectangle().fill(Color(.secondarySystemFill))
             if let image {
-                Image(uiImage: image).resizable().scaledToFill()
+                Image(uiImage: image).resizable().aspectRatio(contentMode: contentMode)
             } else if failed {
                 Image(systemName: "photo").foregroundStyle(.secondary)
             } else {

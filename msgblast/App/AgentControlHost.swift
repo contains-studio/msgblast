@@ -47,9 +47,16 @@ extension AppModel: AgentControlHost {
         let web = comparison.resolvedWebAgentIDs.flatMap { id -> [AgentControlTurn] in
             guard let session = webAgents.sessions.first(where: { $0.id == id }) else { return [] }
             let offered = comparison.endedAt == nil ? session.actionsForComparison(comparison.id) : nil
-            return session.messagesForComparison(comparison.id).map {
-                AgentControlTurn(agent: session.name, outgoing: $0.role == "user", text: $0.text, date: nil, actions: offered?.labels(for: $0.id),
-                                 actionsId: offered?.labels(for: $0.id) == nil ? nil : offered?.offerID)
+            return session.messagesForComparison(comparison.id).map { message in
+                let labels = offered?.labels(for: message.id)
+                var turn = AgentControlTurn(agent: session.name, outgoing: message.role == "user", text: message.text, date: nil,
+                                            actions: labels, actionsId: labels == nil ? nil : offered?.offerID)
+                turn.products = message.products?.map { product in
+                    var current = product
+                    current.action = offered?.label(for: product, in: message.id)
+                    return current
+                }
+                return turn
             }
         }
         return messages + web
