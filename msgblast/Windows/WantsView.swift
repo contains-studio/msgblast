@@ -60,7 +60,7 @@ private struct WantsSignInView: View {
             HStack {
                 SecureField("Write key (wk_…)", text: $key).textFieldStyle(.roundedBorder).frame(width: 260)
                 Button("Add") {
-                    if wants.useWriteKey(key) { key = "" } else { wants.error = "That isn't a write key. Keys start with wk_." }
+                    if wants.useWriteKey(key) { key = "" }
                 }.disabled(key.isEmpty)
             }
             Text("On wantmcp.com, open a list's settings, then Agents › Add another agent.").font(.callout).foregroundStyle(.secondary)
@@ -110,7 +110,7 @@ private struct WantItemDetail: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(item.text).font(.title2.bold()).textSelection(.enabled)
                     HStack(spacing: 8) {
-                        Link(list.title, destination: URL(string: list.url(for: item))!)
+                        if let url = URL(string: list.url(for: item)), ["http", "https"].contains(url.scheme) { Link(list.title, destination: url) } else { Text(list.title) }
                         if list.isPrivate { Label("Private", systemImage: "lock").foregroundStyle(.secondary) }
                         if let status { Text(status).foregroundStyle(.secondary) }
                     }.font(.callout)
@@ -186,7 +186,7 @@ private struct WantEntryRow: View {
                     if let price = entry.currentPrice {
                         Text(price.formatted).fontWeight(.semibold)
                         if let was = price.formattedOriginal { Text(was).strikethrough().foregroundStyle(.secondary) }
-                        if price.verified == false { Text("unverified").font(.caption).foregroundStyle(.orange) }
+                        if !price.isVerified { Text("unverified").font(.caption).foregroundStyle(.orange) }
                         if let checked = price.checkedAt { Text("checked \(checked.formatted(.relative(presentation: .named)))").font(.caption).foregroundStyle(.secondary) }
                     }
                 }

@@ -150,14 +150,14 @@ final class WantsTests: XCTestCase {
         WantStub.handler = { request in
             let arguments = ((try! JSONSerialization.jsonObject(with: WantStub.body(request)) as! [String: Any])["params"] as! [String: Any])["arguments"] as! [String: Any]
             calls.append(arguments)
-            let page: [String: Any] = arguments["cursor"] == nil ? ["list": summary, "items": [compact], "next_cursor": "p2"] : ["list": summary, "items": [compact], "next_cursor": NSNull()]
+            let page: [String: Any] = ["list": summary, "items": [compact], "next_cursor": calls.count < 21 ? String(calls.count) as Any : NSNull()]
             return self.reply(["structuredContent": page], to: request)
         }
         let list = try await client().list("lst_1")
-        XCTAssertEqual(calls.map { $0["cursor"] as? String }, [nil, "p2"])
+        XCTAssertEqual(calls.map { $0["cursor"] as? String }, [nil] + (1...20).map { String($0) })
         XCTAssertEqual(Set(calls.flatMap(\.keys)), ["list", "cursor"], "only arguments the tool lists")
         XCTAssertEqual(list.title, "Gifts")
-        XCTAssertEqual(list.items?.count, 2)
+        XCTAssertEqual(list.items?.count, 21)
         XCTAssertEqual(list.items?.first?.openQuestion?.options, ["Electric", "Stovetop"])
         XCTAssertNil(list.items?.first?.entries)
     }
@@ -166,8 +166,21 @@ final class WantsTests: XCTestCase {
         let price = try WantJSON.decoder.decode(WantPrice.self, from: JSONSerialization.data(withJSONObject: [
             "price": "59.00", "currency": "GBP", "original_price": NSNull(), "posted_by": ["kind": "user", "handle": "x"], "posted_at": "2026-11-26T09:00:00Z",
             "source": "search", "verified": false, "checked_at": "2026-11-26T08:00:00Z"] as [String: Any]))
-        XCTAssertEqual(price.verified, false)
+        XCTAssertFalse(price.isVerified)
+        var legacy = price; legacy.verified = nil
+        XCTAssertFalse(legacy.isVerified)
         XCTAssertNotNil(price.checkedAt)
+    }
+
+    func testSavedWriteKeyBelongsOnlyToItsEndpoint() throws {
+        var key = WantCredential(accessToken: "wk_fixture")
+        XCTAssertNil(WantCredential.restore(try JSONEncoder().encode(key), for: endpoint))
+        key.endpoint = endpoint
+        let data = try JSONEncoder().encode(key)
+        XCTAssertEqual(WantCredential.restore(data, for: endpoint), key)
+        XCTAssertNil(WantCredential.restore(data, for: URL(string: "https://different.test/mcp")!))
+        XCTAssertFalse(WantMCPClient.allowsEndpoint(URL(string: "http://example.com/mcp")!))
+        XCTAssertTrue(WantMCPClient.allowsEndpoint(URL(string: "http://127.0.0.1:8787/mcp")!))
     }
 
     func testWriteKeyValidation() {
