@@ -79,6 +79,9 @@ extension SideChatModelCheck {
         _ = await wants.take(WantEventPage(events: [comment], cursor: "102"))
         precondition(model.agentSendActivity.log.entries.count == after, "A repeated cursor cannot send again")
         try await checkRevokedForward(model, event: comment)
+        wants.signOut()
+        let restored = WantsModel(app: model)
+        precondition(!restored.saved.forwardActivity && restored.saved.forwardAgents.isEmpty && restored.saved.forwardedConversations.isEmpty)
         print("PASS: Wants saves the cursor before forwarding, keeps answers with explicitly asked agents, and revokes queued sends when forwarding changes.")
     }
 
