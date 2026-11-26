@@ -134,7 +134,11 @@ import msgblastRemoteProtocol
     // MARK: Sign-in
 
     func signIn() async {
-        guard !signingIn else { return }
+        guard !signedIn, !signingIn else { return }
+        if app.demo {
+            store(WantCredential(accessToken: "demo"))
+            return
+        }
         signingIn = true; error = nil
         let callback = WantOAuthCallback()
         self.callback = callback
