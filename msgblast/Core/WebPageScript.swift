@@ -114,7 +114,7 @@ struct WebPageScript {
             const role=label==='Sent message,' ? 'user' : label==='Received message,' ? 'assistant' : null;
             if (!role) return [];
             const copy=e.cloneNode(true);
-            copy.querySelectorAll('button,[role="button"],.clip,svg,style,script').forEach(n=>n.remove());
+            copy.querySelectorAll('button,[role="button"],time,[role="time"],.clip,svg,style,script').forEach(n=>n.remove());
             const links=new Set();
             for (const a of copy.querySelectorAll('a[href]')) {
                 const u=new URL(a.getAttribute('href'),location.href);
@@ -480,7 +480,8 @@ struct WebPageScript {
         function turn(label,text) {
             const row=document.createElement('div'),body=document.createElement('div'),role=document.createElement('span');
             row.dataset.testid=crypto.randomUUID();role.className='clip';role.textContent=label;
-            body.append(role,document.createTextNode(text));row.append(body);turns.append(row);return body;
+            const time=document.createElement('time');time.textContent='10:15 AM';
+            body.append(role,document.createTextNode(text),time);row.append(body);turns.append(row);return body;
         }
         send.onclick=()=>{
             turn('Sent message,',input.value);input.value='';input.oninput();
