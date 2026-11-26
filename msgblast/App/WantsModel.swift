@@ -56,6 +56,7 @@ import msgblastRemoteProtocol
     private var credential: WantCredential?
     private var service: WantService!
     private var poller: Task<Void, Never>?
+    private var reloadPending = false
     /// Bumped on sign-out so requests still in flight from the old sign-in are discarded.
     private var session = 0
     private var callback: WantOAuthCallback?
@@ -68,10 +69,10 @@ import msgblastRemoteProtocol
         self.app = app
         let directory = app.local.url.deletingLastPathComponent()
         fileURL = directory.appendingPathComponent("wants.json")
-        keychain = WantKeychain(directory: directory)
-        if let data = try? Data(contentsOf: fileURL) {
-            if let decoded = try? JSONDecoder().decode(Saved.self, from: data) { saved = decoded } else { canSave = false }
-        }
+        keychain = WantKeychain(directory: directory, endpoint: Self.endpoint)
+        do { saved = try JSONDecoder().decode(Saved.self, from: Data(contentsOf: fileURL)) }
+        catch let error as CocoaError where error.code == .fileReadNoSuchFile {}
+        catch { canSave = false; self.error = "Wants settings could not be read. The existing file has been preserved." }
         if app.demo {
             signedIn = true
             service = WantFixture(activityDelay: 60)
@@ -86,16 +87,7 @@ import msgblastRemoteProtocol
                 saved = Saved()
                 saved.grantID = credential?.grantID
             }
-            service = liveService()
-        }
-    }
-
-    private func liveService() -> WantMCPClient {
-        let generation = session
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
-        return WantMCPClient(endpoint: Self.endpoint, version: version) { [weak self] in
-            guard let self else { throw CancellationError() }
-            return try await self.token(for: generation)
+            connectService()
         }
     }
 
@@ -111,8 +103,8 @@ import msgblastRemoteProtocol
         }
     }
 
-    func reload() async {
-        let service = self.service!
+    @discardableResult func reload() async -> Bool {
+        guard signedIn, let service else { return false }
         let session = self.session
         do {
             var loaded: [WantList] = [], loadedComments: [String: [WantComment]] = [:], loadedSuggestions: [String: [WantEntry]] = [:]
@@ -122,13 +114,19 @@ import msgblastRemoteProtocol
                 loadedComments[list.id] = try await service.comments(listID: list.id)
                 loadedSuggestions[list.id] = try await service.suggestions(listID: list.id)
             }
-            for id in entries.keys { loadedEntries[id] = try await service.entries(itemID: id) }
-            guard session == self.session else { return }
+            let visible = Set(loaded.flatMap { ($0.items ?? []).map(\.id) })
+            for id in entries.keys where visible.contains(id) { loadedEntries[id] = try await service.entries(itemID: id) }
+            guard session == self.session else { return false }
             lists = loaded
-            comments.merge(loadedComments) { $1 }
-            suggestions.merge(loadedSuggestions) { $1 }
-            entries.merge(loadedEntries) { $1 }
-        } catch { if session == self.session { fail(error) } }
+            comments = loadedComments
+            suggestions = loadedSuggestions
+            entries = entries.filter { visible.contains($0.key) }.merging(loadedEntries) { _, new in new }
+            reloadPending = false
+            return true
+        } catch {
+            if session == self.session { reloadPending = true; fail(error) }
+            return false
+        }
     }
 
     // MARK: Sign-in
@@ -156,7 +154,7 @@ import msgblastRemoteProtocol
     }
 
     private func authorize(_ callback: WantOAuthCallback) async throws -> WantCredential {
-        let resource = Self.endpoint
+        let resource = keychain.endpoint
         let redirect = try await callback.start()
         let server = try await WantOAuth.discover(resource: resource, hint: nil)
         try Task.checkCancellation()
@@ -176,38 +174,46 @@ import msgblastRemoteProtocol
         signingIn = false
     }
 
-    /// Returns false when the text is not a write key.
     func useWriteKey(_ text: String) -> Bool {
-        guard let credential = WantCredential.writeKey(text) else { return false }
+        guard !signedIn, !signingIn else { return false }
+        guard let credential = WantCredential.writeKey(text) else { error = "That isn't a write key. Keys start with wk_."; return false }
         error = nil
-        store(credential)
-        return true
+        return store(credential)
     }
 
     func signOut() {
         poller?.cancel(); poller = nil; session += 1
         refreshing?.cancel(); refreshing = nil
-        keychain.delete(); credential = nil
+        if !app.demo, !keychain.delete() { error = "Signed out on this Mac. The Keychain could not remove the saved key." }
+        credential = nil; reloadPending = false
         signedIn = false; lists = []; comments = [:]; suggestions = [:]; entries = [:]
-        resetSaved(for: nil)
+        update { $0 = Saved() }
+        saved = Saved()
     }
 
-    private func resetSaved(for grantID: UUID?) {
-        var clean = Saved()
-        clean.grantID = grantID
-        update { $0 = clean }
-        saved = clean
-    }
-
-    private func store(_ grant: WantCredential) {
+    @discardableResult private func store(_ grant: WantCredential) -> Bool {
         var credential = grant
         credential.grantID = UUID()
-        guard keychain.save(credential) else { error = "msgblast could not save your sign-in to the Keychain."; return }
+        guard app.demo || WantMCPClient.allowsEndpoint(keychain.endpoint) else { error = "Use an HTTPS Want MCP endpoint, or HTTP on localhost."; return false }
+        var clean = Saved()
+        clean.grantID = credential.grantID
+        guard update({ $0 = clean }) else { return false }
+        guard app.demo || keychain.save(credential) else { error = "msgblast could not save your sign-in to the Keychain."; return false }
+        session += 1
         self.credential = credential
-        resetSaved(for: credential.grantID)
-        if !app.demo { service = liveService() }
+        if !app.demo { connectService() }
         signedIn = true
         start()
+        return true
+    }
+
+    private func connectService() {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+        let generation = session
+        service = WantMCPClient(endpoint: keychain.endpoint, version: version) { [weak self] in
+            guard let self else { throw CancellationError() }
+            return try await self.token(for: generation)
+        }
     }
 
     /// The bearer token, refreshed first when an OAuth token is about to expire.
@@ -221,7 +227,7 @@ import msgblastRemoteProtocol
         }
         let task = Task {
             defer { if session == generation { refreshing = nil } }
-            var next = try await WantOAuth.refresh(credential, resource: Self.endpoint)
+            var next = try await WantOAuth.refresh(credential, resource: keychain.endpoint)
             guard session == generation else { throw CancellationError() }
             next.grantID = credential.grantID
             self.credential = next
@@ -236,6 +242,7 @@ import msgblastRemoteProtocol
 
     /// Loads an item's entries when it is opened, and again when the event feed reports changes.
     func loadEntries(_ item: WantItem) async {
+        guard signedIn, lists.contains(where: { $0.items?.contains(where: { $0.id == item.id }) == true }) else { return }
         let session = self.session
         do {
             let loaded = try await service.entries(itemID: item.id)
@@ -311,12 +318,13 @@ import msgblastRemoteProtocol
     /// One round of `events/poll`. Returns the seconds until the next round.
     private func poll() async -> TimeInterval {
         let session = self.session
-        var delay: TimeInterval = 30, changed = false
+        var delay: TimeInterval = 30, changed = reloadPending
+        var cursor = saved.cursors[Self.activity]
         do {
             for _ in 0..<10 {
-                let page = try await service.poll(Self.activity, cursor: saved.cursors[Self.activity])
+                let page = try await service.poll(Self.activity, cursor: cursor)
                 guard session == self.session else { return delay }
-                update { $0.cursors[Self.activity] = page.cursor }
+                cursor = page.cursor
                 changed = changed || !page.events.isEmpty
                 delay = max(page.nextPoll ?? delay, 5)
                 if !page.hasMore { break }
@@ -325,7 +333,9 @@ import msgblastRemoteProtocol
             if session == self.session { fail(error) }
             return 60
         }
-        if changed { await reload() }
+        if changed, !(await reload()) { return 60 }
+        guard session == self.session else { return delay }
+        update { $0.cursors[Self.activity] = cursor }
         return delay
     }
 
@@ -338,44 +348,59 @@ import msgblastRemoteProtocol
         }
     }
 
-    private func update(_ change: (inout Saved) -> Void) {
+    @discardableResult private func update(_ change: (inout Saved) -> Void) -> Bool {
         var next = saved
         change(&next)
-        guard next != saved else { return }
-        saved = next
-        guard canSave else { return }
+        guard next != saved else { return true }
+        guard canSave else { return false }
         do {
             try JSONEncoder().encode(next).write(to: fileURL, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
-        } catch { self.error = "msgblast could not save Wants settings." }
+            saved = next
+            return true
+        } catch { self.error = "msgblast could not save Wants settings."; return false }
     }
 }
 
 /// The Want MCP credential in the data-protection Keychain, one per msgblast profile.
 struct WantKeychain {
     let directory: URL
+    let endpoint: URL
+    private var account: String { SHA256.hash(data: Data(directory.standardizedFileURL.path.utf8)).map { String(format: "%02x", $0) }.joined() }
+    private var signedOutKey: String { "WantMCPSignedOut." + account }
 
     func read() -> WantCredential? {
+        guard !UserDefaults.standard.bool(forKey: signedOutKey) else { return nil }
         var query = self.query(); query[kSecReturnData as String] = true; query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return nil }
-        return try? JSONDecoder().decode(WantCredential.self, from: data)
+        return WantCredential.restore(data, for: endpoint)
     }
     func save(_ credential: WantCredential) -> Bool {
-        guard let data = try? JSONEncoder().encode(credential) else { return false }
+        var bound = credential
+        bound.endpoint = endpoint
+        guard let data = try? JSONEncoder().encode(bound) else { return false }
         var item = query()
-        SecItemDelete(item as CFDictionary)
-        item[kSecValueData as String] = data
-        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
+        var status = SecItemUpdate(item as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if status == errSecItemNotFound {
+            item[kSecValueData as String] = data
+            item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            status = SecItemAdd(item as CFDictionary, nil)
+        }
+        if status == errSecSuccess { UserDefaults.standard.removeObject(forKey: signedOutKey) }
+        return status == errSecSuccess
     }
-    func delete() { SecItemDelete(query() as CFDictionary) }
+    func delete() -> Bool {
+        UserDefaults.standard.set(true, forKey: signedOutKey)
+        let status = SecItemDelete(query() as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
+    }
 
     private func query() -> [String: Any] {
         let context = LAContext()
         context.interactionNotAllowed = true
         return [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "com.msgblast.wantmcp.\(Bundle.main.bundleIdentifier ?? "unknown")",
-                kSecAttrAccount as String: SHA256.hash(data: Data(directory.standardizedFileURL.path.utf8)).map { String(format: "%02x", $0) }.joined(),
+                kSecAttrAccount as String: account,
                 kSecUseDataProtectionKeychain as String: true, kSecUseAuthenticationContext as String: context]
     }
 }

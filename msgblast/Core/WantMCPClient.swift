@@ -62,26 +62,28 @@ public struct WantMCPClient: WantService {
     }
     public func list(_ id: String) async throws -> WantList {
         var list: WantList?, cursor: String?
-        for _ in 0..<20 {
+        var seen: Set<String> = []
+        repeat {
             let content = try await tool("get_list", cursor.map { ["list": id, "cursor": $0] } ?? ["list": id]) as? [String: Any] ?? [:]
             // The compact read may nest the list's own fields under `list`.
             let fields = (content["list"] as? [String: Any] ?? [:]).merging(content) { _, page in page }
             let page = try decode(WantList.self, fields)
             if var merged = list { merged.items = (merged.items ?? []) + (page.items ?? []); list = merged } else { list = page }
             cursor = content["next_cursor"] as? String
-            if cursor == nil { break }
-        }
+            if let cursor, !seen.insert(cursor).inserted { throw WantError.invalidResponse }
+        } while cursor != nil
         guard let list else { throw WantError.invalidResponse }
         return list
     }
     public func entries(itemID: String) async throws -> [WantEntry] {
         var entries: [WantEntry] = [], cursor: String?
-        for _ in 0..<10 {
+        var seen: Set<String> = []
+        repeat {
             let content = try await tool("get_item_entries", cursor.map { ["item_id": itemID, "cursor": $0] } ?? ["item_id": itemID])
             entries += try decode([WantEntry].self, content, key: "entries")
             cursor = (content as? [String: Any])?["next_cursor"] as? String
-            if cursor == nil { break }
-        }
+            if let cursor, !seen.insert(cursor).inserted { throw WantError.invalidResponse }
+        } while cursor != nil
         return entries
     }
     public func answer(questionID: String, text: String) async throws {
@@ -128,7 +130,13 @@ public struct WantMCPClient: WantService {
         return try WantJSON.decoder.decode([T].self, from: JSONSerialization.data(withJSONObject: value))
     }
 
+    public static func allowsEndpoint(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased(), !host.isEmpty, url.user == nil, url.password == nil else { return false }
+        return url.scheme?.lowercased() == "https" || (url.scheme?.lowercased() == "http" && ["localhost", "127.0.0.1", "[::1]"].contains(host))
+    }
+
     func request(_ method: String, _ params: [String: Any]) async throws -> [String: Any] {
+        guard Self.allowsEndpoint(endpoint) else { throw WantError.server("Use an HTTPS Want MCP endpoint, or HTTP on localhost.") }
         var params = params
         params["_meta"] = [
             "io.modelcontextprotocol/protocolVersion": Self.protocolVersion,
@@ -146,7 +154,7 @@ public struct WantMCPClient: WantService {
         if method == "tools/call" || method.hasPrefix("events/"), let name = params["name"] as? String { request.setValue(name, forHTTPHeaderField: "Mcp-Name") }
         let bearer = try await token()
         if let bearer { request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization") }
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await session.data(for: request, delegate: WantRedirectPolicy())
         guard let http = response as? HTTPURLResponse else { throw WantError.invalidResponse }
         if http.statusCode == 403 { throw WantError.server("The Want MCP did not allow that request.") }
         if http.statusCode == 401 {
@@ -173,4 +181,9 @@ public struct WantMCPClient: WantService {
         }
         throw WantError.invalidResponse
     }
+}
+
+
+final class WantRedirectPolicy: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest) async -> URLRequest? { nil }
 }

@@ -7,6 +7,7 @@ import Network
 public struct WantCredential: Codable, Equatable, Sendable {
     public var grantID: UUID?
     public var accessToken: String
+    public var endpoint: URL?
     public var refreshToken: String?
     public var expiresAt: Date?
     /// Set for OAuth grants, so the token can be refreshed.
@@ -14,6 +15,10 @@ public struct WantCredential: Codable, Equatable, Sendable {
 
     public init(accessToken: String, refreshToken: String? = nil, expiresAt: Date? = nil, clientID: String? = nil, tokenEndpoint: URL? = nil) {
         self.accessToken = accessToken; self.refreshToken = refreshToken; self.expiresAt = expiresAt; self.clientID = clientID; self.tokenEndpoint = tokenEndpoint
+    }
+    public static func restore(_ data: Data, for endpoint: URL) -> Self? {
+        guard let key = try? JSONDecoder().decode(Self.self, from: data), key.endpoint == endpoint else { return nil }
+        return key
     }
     /// A pasted `wk_` key, or nil when it does not look like one.
     public static func writeKey(_ text: String) -> WantCredential? {
@@ -42,6 +47,7 @@ public enum WantOAuth {
     }
 
     public static func discover(resource: URL, hint: URL?, session: URLSession = .shared) async throws -> Server {
+        guard WantMCPClient.allowsEndpoint(resource) else { throw WantError.server("Use an HTTPS Want MCP endpoint, or HTTP on localhost.") }
         var origin = URLComponents(url: resource, resolvingAgainstBaseURL: false)!
         origin.path = ""; origin.query = nil
         let base = origin.url!
@@ -53,6 +59,7 @@ public enum WantOAuth {
         guard let server = await firstJSON(wellKnown, session: session), server["issuer"] as? String == issuer,
               let authorize = (server["authorization_endpoint"] as? String).flatMap(URL.init(string:)),
               let token = (server["token_endpoint"] as? String).flatMap(URL.init(string:)) else { throw WantError.server("The Want MCP's sign-in server could not be found.") }
+        guard WantMCPClient.allowsEndpoint(authorize), WantMCPClient.allowsEndpoint(token) else { throw WantError.server("The sign-in server returned an invalid endpoint.") }
         guard (server["code_challenge_methods_supported"] as? [String])?.contains("S256") == true else { throw WantError.server("The Want MCP's sign-in server does not support PKCE.") }
         let offline = (server["scopes_supported"] as? [String])?.contains("offline_access") == true ? ["offline_access"] : []
         let scopes = (metadata["scopes_supported"] as? [String] ?? []) + offline
@@ -65,7 +72,7 @@ public enum WantOAuth {
     /// Registers msgblast and returns its client id. The loopback redirect is registered without its port,
     /// which the server accepts on any port at authorization time (RFC 8252 section 7.3).
     public static func register(_ server: Server, redirect: URL, session: URLSession = .shared) async throws -> String {
-        guard let endpoint = server.registrationEndpoint else { throw WantError.server("The Want MCP does not accept new apps yet.") }
+        guard let endpoint = server.registrationEndpoint, WantMCPClient.allowsEndpoint(endpoint) else { throw WantError.server("The Want MCP does not accept new apps yet.") }
         let body: [String: Any] = ["client_name": "msgblast", "client_uri": "https://github.com/contains-studio/msgblast", "application_type": "native",
                                    "redirect_uris": [portless(redirect)], "grant_types": ["authorization_code", "refresh_token"],
                                    "response_types": ["code"], "token_endpoint_auth_method": "none"]
@@ -125,7 +132,7 @@ public enum WantOAuth {
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         var allowed = CharacterSet.urlQueryAllowed; allowed.remove(charactersIn: "+&=")
         request.httpBody = Data(form.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: allowed) ?? "")" }.joined(separator: "&").utf8)
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await session.data(for: request, delegate: WantRedirectPolicy())
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw WantError.invalidResponse }
         guard (response as? HTTPURLResponse)?.statusCode == 200, let access = json["access_token"] as? String else {
             if json["error"] as? String == "invalid_grant", form["grant_type"] == "refresh_token" { throw WantError.unauthorized(resourceMetadata: nil) }
@@ -140,15 +147,15 @@ public enum WantOAuth {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: json)
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await session.data(for: request, delegate: WantRedirectPolicy())
         guard (200..<300).contains((response as? HTTPURLResponse)?.statusCode ?? 0),
               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw WantError.server("The Want MCP did not register msgblast.") }
         return object
     }
 
     private static func firstJSON(_ urls: [URL], session: URLSession) async -> [String: Any]? {
-        for url in urls {
-            guard let (data, response) = try? await session.data(from: url), (response as? HTTPURLResponse)?.statusCode == 200,
+        for url in urls where WantMCPClient.allowsEndpoint(url) {
+            guard let (data, response) = try? await session.data(for: URLRequest(url: url), delegate: WantRedirectPolicy()), (response as? HTTPURLResponse)?.statusCode == 200,
                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
             return object
         }
