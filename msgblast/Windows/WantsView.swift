@@ -335,10 +335,10 @@ private struct WantsForwardMenu: View {
         Toggle(isOn: Binding(get: { wants.saved.forwardActivity }, set: { on in
             if on && wants.saved.forwardAgents.isEmpty { picking = true } else { wants.setForwarding(on) }
         })) { Label("Forward Activity", systemImage: "bell.badge") }
-            .help("Send new comments and outside suggestions to your agents")
+            .help("Forward comments, outside suggestions and answers from your lists")
             .contextMenu { Button("Choose Agents…") { picking = true } }
             .sheet(isPresented: $picking) {
-                WantsAgentPicker(title: "Forward new comments and suggestions to", action: "Turn On", agents: wants.agents, initial: wants.saved.forwardAgents) {
+                WantsAgentPicker(title: "Choose agents for items you haven’t asked about", action: "Turn On", agents: wants.agents, initial: wants.saved.forwardAgents) {
                     wants.setForwarding(true, agents: $0)
                 }
             }

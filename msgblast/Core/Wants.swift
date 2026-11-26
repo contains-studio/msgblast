@@ -134,14 +134,16 @@ public enum WantJSON {
 
 /// Which agents hear about new activity on a list.
 public enum WantForwarding {
-    public static let types: Set<String> = ["comment.created", "entry.suggested", "question.answered"]
-
     /// The agents to tell about `event`: the ones last asked about its item, else the chosen
     /// defaults, limited to agents msgblast can send to now. Empty when forwarding is off, for
     /// other event types, and for anything an agent posted, so agents never answer each other in a loop.
     /// An answer goes only to the agents asked about that item; a new question is for the person, not agents.
     public static func recipients(for event: WantEvent, enabled: Bool, itemAgents: [String]?, defaults: [String], sendable: Set<String>) -> [String] {
-        guard enabled, types.contains(event.type), !event.actor.isAgent else { return [] }
+        guard enabled else { return [] }
+        switch (event.type, event.actor) {
+        case ("comment.created", .user), ("question.answered", .user), ("entry.suggested", .outside): break
+        default: return []
+        }
         let targets = event.type == "question.answered" ? itemAgents ?? [] : itemAgents ?? defaults
         return targets.filter(sendable.contains)
     }

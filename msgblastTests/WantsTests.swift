@@ -236,6 +236,8 @@ final class WantsTests: XCTestCase {
         XCTAssertEqual(WantForwarding.recipients(for: comment, enabled: false, itemAgents: ["web:claude"], defaults: [], sendable: sendable), [])
         var byAgent = comment; byAgent.actor = .agent(name: "Claude", ownerHandle: "quiet-otter-4821")
         XCTAssertEqual(WantForwarding.recipients(for: byAgent, enabled: true, itemAgents: ["web:claude"], defaults: [], sendable: sendable), [], "agents never answer each other in a loop")
+        var outsideComment = comment; outsideComment.actor = .outside(name: "ShopBot")
+        XCTAssertEqual(WantForwarding.recipients(for: outsideComment, enabled: true, itemAgents: nil, defaults: ["web:chatgpt"], sendable: sendable), [])
         var listed = comment; listed.type = "entry.listed"
         XCTAssertEqual(WantForwarding.recipients(for: listed, enabled: true, itemAgents: ["web:claude"], defaults: [], sendable: sendable), [])
     }

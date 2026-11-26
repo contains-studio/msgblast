@@ -19,6 +19,7 @@ import msgblastRemoteProtocol
         var cursors: [String: String] = [:]
         /// The newest blast for each item, so its replies show and activity goes to the same agents.
         var blasts: [String: Blast] = [:]
+        var forwardedConversations: [String: UUID] = [:]
         var forwardActivity = false
         var forwardAgents: [String] = []
 
@@ -28,6 +29,7 @@ import msgblastRemoteProtocol
             let c = try decoder.container(keyedBy: CodingKeys.self)
             cursors = try c.decodeIfPresent([String: String].self, forKey: .cursors) ?? [:]
             blasts = try c.decodeIfPresent([String: Blast].self, forKey: .blasts) ?? [:]
+            forwardedConversations = try c.decodeIfPresent([String: UUID].self, forKey: .forwardedConversations) ?? [:]
             forwardActivity = try c.decodeIfPresent(Bool.self, forKey: .forwardActivity) ?? false
             forwardAgents = try c.decodeIfPresent([String].self, forKey: .forwardAgents) ?? []
         }
@@ -60,6 +62,7 @@ import msgblastRemoteProtocol
     private var poller: Task<Void, Never>?
     /// Bumped on sign-out so requests still in flight from the old sign-in are discarded.
     private var session = 0
+    private var forwardingRevision = 0
     private var callback: WantOAuthCallback?
     private var refreshing: Task<WantCredential?, Never>?
     private lazy var sends = AgentControlSends(model: app, source: .wants)
@@ -150,7 +153,7 @@ import msgblastRemoteProtocol
         poller?.cancel(); poller = nil; session += 1
         keychain.delete(); credential = nil
         signedIn = false; lists = []; comments = [:]; suggestions = [:]; entries = [:]
-        update { $0.cursors = [:] }
+        if !update({ $0 = Saved() }) { saved = Saved() }
     }
 
     private func store(_ credential: WantCredential) {
@@ -220,18 +223,18 @@ import msgblastRemoteProtocol
 
     /// The agents' replies to the newest blast for an item.
     func replies(for item: WantItem) -> (comparison: UUID, turns: [AgentControlTurn])? {
-        guard let id = saved.blasts[item.id]?.comparisonID, let comparison = app.comparison(id) else { return nil }
+        guard let id = saved.blasts[item.id]?.comparisonID ?? saved.forwardedConversations[item.id], let comparison = app.comparison(id) else { return nil }
         return (id, app.controlTranscript(comparison).filter { !$0.outgoing })
     }
 
     func openConversation(_ id: UUID) { app.coordinator?.open(id) }
 
-    private func send(_ action: RemoteAction, quietly: Bool = false) async -> RemoteCommandResult? {
+    private func send(_ action: RemoteAction, quietly: Bool = false, isAuthorized: @MainActor () -> Bool = { true }) async -> RemoteCommandResult? {
         sendsInFlight += 1
         defer { sendsInFlight -= 1 }
-        let result = await sends.send(RemoteCommand(action: action), client: "Wants")
+        let result = await sends.send(RemoteCommand(action: action), client: "Wants", isAuthorized: isAuthorized)
         guard result.outcome != .rejected else {
-            guard !quietly else { return nil }
+            guard !quietly else { return result }
             let reasons = result.agentReasons.values.sorted()
             error = ([result.message ?? "msgblast did not send it."] + reasons).joined(separator: " ")
             return nil
@@ -249,7 +252,7 @@ import msgblastRemoteProtocol
             for _ in 0..<10 {
                 let page = try await service.poll(Self.activity, cursor: saved.cursors[Self.activity])
                 guard session == self.session else { return delay }
-                await take(page)
+                guard await take(page) else { return delay }
                 changed = changed || !page.events.isEmpty
                 delay = max(page.nextPoll ?? delay, 5)
                 if !page.hasMore { break }
@@ -263,32 +266,51 @@ import msgblastRemoteProtocol
     }
 
     /// Saves the cursor before forwarding, so a crash mid-send never forwards the same event twice.
-    private func take(_ page: WantEventPage) async {
-        update { $0.cursors[Self.activity] = page.cursor }
-        for event in page.events { await forward(event) }
+    func take(_ page: WantEventPage) async -> Bool {
+        let session = self.session
+        let revision = forwardingRevision
+        guard let cursor = page.cursor, saved.cursors[Self.activity] != cursor else { return page.events.isEmpty }
+        guard update({ $0.cursors[Self.activity] = cursor }) else { return false }
+        for event in page.events {
+            guard session == self.session else { return false }
+            guard saved.forwardActivity, revision == forwardingRevision else { break }
+            await forward(event, session: session, revision: revision)
+        }
+        return session == self.session
     }
 
     func setForwarding(_ on: Bool, agents: [String]? = nil) {
-        update { saved in
+        forwardingRevision += 1
+        let persisted = update { saved in
             saved.forwardActivity = on
             if let agents { saved.forwardAgents = agents }
         }
+        if !persisted && !on { saved.forwardActivity = false }
     }
 
-    /// Tells the item's agents about a new comment, outside suggestion or answer, in the item's open conversation when there is one.
-    private func forward(_ event: WantEvent) async {
-        let itemID = event.item?.id ?? event.entry?.itemId
-        let blast = itemID.flatMap { saved.blasts[$0] }
-        let targets = WantForwarding.recipients(for: event, enabled: saved.forwardActivity, itemAgents: blast?.agents,
-                                                defaults: saved.forwardAgents, sendable: Set(agents.map(\.id)))
-        guard !targets.isEmpty else { return }
+    private func forward(_ event: WantEvent, session: Int, revision: Int) async {
         if !lists.contains(where: { $0.id == event.listId }) { await reload() }
         guard let list = lists.first(where: { $0.id == event.listId }), let text = WantPrompt.activity(event, list: list) else { return }
+        let itemID = event.item?.id ?? event.entry?.itemId
+        let asked = itemID.flatMap { saved.blasts[$0] }
+        let targets = WantForwarding.recipients(for: event, enabled: saved.forwardActivity, itemAgents: asked?.agents,
+                                                defaults: saved.forwardAgents, sendable: Set(agents.map(\.id)))
+        let authorized: @MainActor () -> Bool = {
+            session == self.session && revision == self.forwardingRevision && self.saved.forwardActivity
+                && itemID.flatMap { self.saved.blasts[$0] } == asked
+        }
+        guard !targets.isEmpty, authorized() else { return }
         let remote = targets.compactMap(AgentControlSend.remoteID)
-        if let id = blast?.comparisonID, app.comparison(id)?.endedAt == nil,
-           await send(.sendShared(conversationID: id, text: text, agentIDs: remote, attachmentIDs: []), quietly: true) != nil { return }
-        if let result = await send(.createConversation(text: text, agentIDs: remote, attachmentIDs: []), quietly: true), let itemID {
-            update { $0.blasts[itemID] = .init(comparisonID: result.conversationID, agents: targets) }
+        if let id = asked?.comparisonID, let comparison = app.comparison(id), comparison.endedAt == nil {
+            let result = await send(.sendShared(conversationID: id, text: text, agentIDs: remote, attachmentIDs: []), quietly: true, isAuthorized: authorized)
+            guard let result, result.outcome == .rejected,
+                  result.code == .unknownConversation || result.code == .conversationEnded, authorized() else { return }
+        }
+        let result = await send(.createConversation(text: text, agentIDs: remote, attachmentIDs: []), quietly: true, isAuthorized: authorized)
+        guard authorized(), let itemID, let id = result?.conversationID, result?.outcome == .applied else { return }
+        update { saved in
+            if asked != nil { saved.blasts[itemID]?.comparisonID = id }
+            else { saved.forwardedConversations[itemID] = id }
         }
     }
 
@@ -301,16 +323,20 @@ import msgblastRemoteProtocol
         }
     }
 
-    private func update(_ change: (inout Saved) -> Void) {
+    @discardableResult private func update(_ change: (inout Saved) -> Void) -> Bool {
         var next = saved
         change(&next)
-        guard next != saved else { return }
-        saved = next
-        guard canSave else { return }
+        guard canSave else { return false }
+        guard next != saved else { return true }
         do {
             try JSONEncoder().encode(next).write(to: fileURL, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
-        } catch { self.error = "msgblast could not save Wants settings." }
+            saved = next
+            return true
+        } catch {
+            self.error = "msgblast could not save Wants settings."
+            return false
+        }
     }
 }
 

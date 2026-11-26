@@ -41,7 +41,66 @@ extension SideChatModelCheck {
         precondition(keepAwake.held == false, "Send assertions are released")
         host.discardStagedAttachments()
         try await runRemoteServiceChecks(model)
+        try await checkWantsForwarding()
         print("PASS: remote commands run through the actual AppModel send paths (Messages new/private/shared with a staged file, website shared send that prepares the chat, waits for readiness and submits once, plus prepareConversation), replay without resending, keep the Mac's drafts and files, route failures to the command result instead of the alert, and refuse when locked or when iMessage sends are off; the real RemoteService pairs an in-memory phone with no network port, streams its snapshot and events, honors keep-awake and the iMessage setting, and forgets the phone. Isolated Demo profile; simulated Messages and local website fixtures only.")
+    }
+
+    @MainActor static func checkWantsForwarding() async throws {
+        let model = AppModel()
+        precondition(model.demo && ProcessInfo.processInfo.arguments.contains("--isolated-demo"))
+        model.remote.power.simulate(locked: false)
+        let wants = model.wants
+        let recipient = RemoteAgentIDs.messages(model.state.agents[0].id)
+        wants.setForwarding(true, agents: [recipient])
+        await wants.reload()
+        let fixture = WantFixture()
+        let page = await fixture.poll("comment.created", cursor: "0")
+        let comment = page.events[0]
+        let itemID = comment.item!.id
+        let file = model.local.url.deletingLastPathComponent().appendingPathComponent("wants.json")
+        let oldSettings = try Data(contentsOf: file)
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        let before = model.agentSendActivity.log.entries.count
+        let savedWhileBlocked = await wants.take(page)
+        precondition(!savedWhileBlocked && model.agentSendActivity.log.entries.count == before)
+        precondition(wants.saved.cursors[WantsModel.activity] == nil)
+        try FileManager.default.removeItem(at: file)
+        try oldSettings.write(to: file)
+        let saved = await wants.take(page)
+        precondition(saved && wants.saved.blasts[itemID] == nil && wants.saved.forwardedConversations[itemID] != nil)
+        let after = model.agentSendActivity.log.entries.count
+        precondition(after == before + 1)
+        var answer = comment
+        answer.type = "question.answered"
+        answer.question = try WantJSON.decoder.decode(WantQuestion.self, from: Data(#"{"id":"question","text":"Which one?","answer":{"text":"The first"}}"#.utf8))
+        _ = await wants.take(WantEventPage(events: [answer], cursor: "102"))
+        precondition(model.agentSendActivity.log.entries.count == after, "An automatic comment never authorizes sharing a later answer")
+        _ = await wants.take(WantEventPage(events: [comment], cursor: "102"))
+        precondition(model.agentSendActivity.log.entries.count == after, "A repeated cursor cannot send again")
+        try await checkRevokedForward(model, event: comment)
+        print("PASS: Wants saves the cursor before forwarding, keeps answers with explicitly asked agents, and revokes queued sends when forwarding changes.")
+    }
+
+    @MainActor static func checkRevokedForward(_ model: AppModel, event: WantEvent) async throws {
+        let activity = model.agentSendActivity
+        var release: CheckedContinuation<Void, Never>?
+        let blocker = Task {
+            await activity.run(RemoteCommand(action: .createConversation(text: "Fixture queue", agentIDs: [], attachmentIDs: [])),
+                               client: "Fixture", isKnown: { false }, prepare: {
+                await withCheckedContinuation { release = $0 }
+            }) { .init(clientCommandID: $0.clientCommandID, outcome: .applied) }
+        }
+        try await waitUntil { release != nil }
+        let count = model.state.comparisons.count
+        let queued = Task { await model.wants.take(.init(events: [event], cursor: "103")) }
+        try await waitUntil { activity.log.entries.first?.client == "Wants" && activity.log.entries.first?.result == nil }
+        model.wants.setForwarding(false)
+        model.wants.setForwarding(true)
+        release?.resume()
+        _ = await blocker.value
+        _ = await queued.value
+        precondition(model.state.comparisons.count == count && activity.log.entries.first?.result?.hasPrefix("Refused") == true)
     }
 
     /// A Messages-only new conversation and its replay. Returns the new conversation's id.
