@@ -159,6 +159,7 @@ public struct AgentAvailability: Codable, Hashable, Sendable, Identifiable {
     /// `sha256:<hex>` of the artwork the Mac shows for this agent; fetch it with `fetchAvatar`.
     /// Older Macs sent other strings here; phones only fetch `sha256:` references.
     public var avatarRef: String?
+    public var suggestedPrompts: [String]?
     public var visibleInGrid: Bool
     public var selectedForSharedSend: Bool
     public var capabilities: AgentCapabilities

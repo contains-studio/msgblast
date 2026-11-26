@@ -309,17 +309,42 @@ public struct WebPageMessage: Codable, Equatable, Identifiable, Sendable {
     public var id: String
     public var role: String
     public var text: String
+    var formattedProducts: Bool?
     /// Product photo URLs from an Alexa card. Nil for every other message, including saved history from before images existed.
     public var images: [String]?
     public init(id: String = UUID().uuidString, role: String, text: String, images: [String]? = nil) {
         self.id = id; self.role = role; self.text = text; self.images = images
     }
+    func replacesReloaded(_ prior: Self) -> Bool {
+        guard role == prior.role else { return false }
+        if text == prior.text { return true }
+        guard formattedProducts == true, prior.formattedProducts != true, prior.text.hasPrefix("Product Comparison Table") else { return false }
+        func links(_ text: String) -> [Substring] {
+            text.split(separator: "\n").filter { $0.hasPrefix("https://www.walmart.com/ip/") }
+        }
+        let products = links(text)
+        return !products.isEmpty && products == links(prior.text)
+    }
+
 }
 
-/// The suggestion buttons Alexa shows under its newest reply, by label.
+/// Choices offered on a shopping reply, with an optional revision for changing product cards.
 public struct WebPageActions: Codable, Equatable, Sendable {
     public var messageID: String
     public var labels: [String]
+    struct CartChoice: Codable, Equatable, Sendable {
+        var itemID: String
+        var messageID: String
+        var label: String
+    }
+    var cartChoices: [CartChoice]?
+    public func labels(for reply: String) -> [String]? {
+        guard let cartChoices else { return messageID == reply ? labels : nil }
+        let matching = cartChoices.filter { $0.messageID == reply }.map(\.label)
+        return matching.isEmpty ? nil : matching
+    }
+    var revision: String?
+    public var offerID: String { revision ?? messageID }
     public init(messageID: String, labels: [String]) { self.messageID = messageID; self.labels = labels }
 }
 
@@ -335,7 +360,8 @@ public struct WebPageSnapshot: Decodable, Equatable, Sendable {
     public var messages: [WebPageMessage] = []
     public var submissionInterrupted: Bool?
     public var signedOut: Bool?
-    /// Alexa only; nil on every other page.
+    /// Present when a shopping reply has actionable controls.
+    public var suggestedPrompts: [String]?
     public var actions: WebPageActions?
     public init() {}
 }

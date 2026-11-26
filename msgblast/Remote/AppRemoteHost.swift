@@ -133,13 +133,17 @@ final class AppRemoteHost: RemoteCommandHost {
             return await sendPrivateToMessagesMember(plan, member: member, files: files)
         }
         guard let session = session(agentID) else { return .rejected(.unknownAgent, "That agent is gone from your Mac") }
-        if let offer = plan.offerID, plan.conversationID.flatMap(session.actionsForComparison).map({ $0.messageID == offer && $0.labels.contains(plan.text) }) != true {
+        if let offer = plan.offerID, plan.conversationID.flatMap(session.actionsForComparison).map({ $0.offerID == offer && $0.labels.contains(plan.text) }) != true {
             return .rejected(.invalidCommand, "\(session.name) no longer offers that choice", conversationID: plan.conversationID)
         }
         model.webBroadcastBusy = true
         let (id, attempt) = await model.sendDirect(plan.text, to: session, existingID: plan.conversationID, interactive: false, action: plan.offerID)
         guard let attempt else { return .rejected(.failed, "Not sent", conversationID: id) }
-        return .applied(conversationID: id, statuses: [agentID: RemoteAttemptStatus(rawValue: attempt.status.rawValue) ?? .uncertain])
+        if plan.isAction, attempt.status == .notSent {
+            return .rejected(.invalidCommand, attempt.detail ?? "The choice is no longer available.", conversationID: id)
+        }
+        return .applied(conversationID: id, statuses: [agentID: RemoteAttemptStatus(rawValue: attempt.status.rawValue) ?? .uncertain],
+                        message: plan.isAction && session.provider == .sparky ? attempt.detail : nil)
     }
 
     /// A private message to one Messages member: a new conversation, or a follow-up in this one.

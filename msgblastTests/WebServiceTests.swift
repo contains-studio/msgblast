@@ -33,6 +33,54 @@ final class WebServiceTests: XCTestCase {
         XCTAssertTrue(newChat?.detail?.contains("original Sparky chat") == true)
     }
 
+    func testSparkyStarterPromptReturnsFormattedProductsAndSingleUseCartActions() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .sparky, storageURL: directory.appendingPathComponent("state.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.suggestedPrompts?.count == 2 }
+        let prompt = try XCTUnwrap(session.suggestedPrompts?.first)
+        let comparison = UUID()
+        let sent = await session.send(prompt, comparisonID: comparison)
+        XCTAssertEqual(sent?.status, .observed)
+        try await waitFor { session.actionsForComparison(comparison) != nil }
+        XCTAssertNil(session.suggestedPrompts)
+        let offer = try XCTUnwrap(session.actionsForComparison(comparison))
+        let productReply = try XCTUnwrap(session.messagesForComparison(comparison).last)
+        let text = productReply.text
+        XCTAssertTrue(text.contains("lighter.\nCompare sizes below."))
+        let legacy = WebPageMessage(id: productReply.id, role: "assistant", text: String(repeating: "Old flattened product card ", count: 40))
+        let upgraded = WebAgentSession.keepingSharedTurns([comparison.uuidString: [legacy]], live: [comparison: [productReply]], onPage: [productReply.id])
+        XCTAssertEqual(upgraded[comparison.uuidString], [productReply])
+        let urls = text.split(separator: "\n").filter { $0.hasPrefix("https://") }
+        let renumbered = WebPageMessage(role: "assistant", text: (["Product Comparison Table"] + urls.map(String.init)).joined(separator: "\n"))
+        let reopened = WebAgentSession.keepingSharedTurns([comparison.uuidString: [renumbered]], live: [comparison: [productReply]], onPage: [productReply.id])
+        XCTAssertEqual(reopened[comparison.uuidString], [productReply])
+        XCTAssertTrue(text.contains("Steel bottle\nPrice: $14.96\nSize: 26 oz\nhttps://www.walmart.com/ip/Fixture-bottle/123456\n\nPlastic bottle\nPrice: $13.88"))
+        XCTAssertEqual(offer.labels, ["Add to cart - Steel bottle", "Add to cart - Plastic bottle"])
+        _ = try await session.webView.evaluateJavaScript("""
+            const first=document.querySelector('[role="group"][data-item-id]');
+            const duplicate=first.cloneNode(true);
+            duplicate.querySelector('button').setAttribute('aria-label','Decrease quantity for Steel bottle');
+            first.after(duplicate); true
+            """)
+        await session.refresh()
+        XCTAssertEqual(session.actionsForComparison(comparison)?.labels, ["Add to cart - Plastic bottle"])
+        let refused = await session.send(offer.labels[0], comparisonID: comparison, action: offer.offerID)
+        XCTAssertEqual(refused?.status, .notSent)
+        _ = try await session.webView.evaluateJavaScript("document.querySelectorAll('[role=group][data-item-id]')[1].remove(); true")
+        await session.refresh()
+        let restored = try XCTUnwrap(session.actionsForComparison(comparison))
+        let added = await session.send(restored.labels[0], comparisonID: comparison, action: restored.offerID)
+        XCTAssertEqual(added?.status, .observed)
+        try await waitFor { session.actionsForComparison(comparison)?.labels == ["Add to cart - Plastic bottle"] }
+        let stale = await session.send(offer.labels[1], comparisonID: comparison, action: offer.offerID)
+        XCTAssertEqual(stale?.status, .notSent)
+        let quantities = try await session.webView.evaluateJavaScript("document.querySelectorAll('[aria-label^=\"Decrease quantity\"]').length")
+        XCTAssertEqual(quantities as? Int, 1)
+    }
+
     func testSparkyFreshChatCannotClaimAnOlderComparisonByRepeatingItsQuestion() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

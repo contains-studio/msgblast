@@ -11,6 +11,7 @@ struct ConversationView: View {
     /// All, one agent is that agent's private thread, several are their union.
     @State private var selection: Set<String> = []
     @State private var actionError: String?
+    @State private var actionReceipt: String?
     /// The suggestion just tapped, so it can't be tapped twice while the Mac clicks it.
     @State private var choosing: String?
     @State private var showingDetails = false
@@ -155,6 +156,7 @@ struct ConversationView: View {
                     .padding(.leading, isGroup ? Space.threadAvatarEdge : Space.screen)
                     .padding(.top, Space.runGap).id("typing-\(agent)")
             }
+            if let actionReceipt { Text(actionReceipt).font(.footnote).foregroundStyle(.secondary).padding(.horizontal, Space.screen) }
             if let actionError { Text(actionError).font(.footnote).foregroundStyle(.red).frame(maxWidth: .infinity).padding(.top, Space.gap).padding(.horizontal, Space.screen) }
             if conversation.endedAt != nil { Text("Ended").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, Space.section) }
         }
@@ -497,11 +499,13 @@ struct ConversationView: View {
 
     private func run(_ action: RemoteAction, finished: @escaping () -> Void = {}) {
         actionError = nil
+        actionReceipt = nil
         Task {
             defer { finished() }
             do {
                 let result = try await app.perform(action)
                 if result.outcome == .rejected { actionError = result.message }
+                else if case .chooseAction = action { actionReceipt = result.message }
             } catch { actionError = (error as? LocalizedError)?.errorDescription ?? MobileConnectionError.unconfirmed.errorDescription }
         }
     }

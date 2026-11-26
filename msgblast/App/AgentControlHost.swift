@@ -24,8 +24,10 @@ extension AppModel: AgentControlHost {
                 kind = provider?.desktopApp != nil ? "app" : provider?.personalAgentProvider != nil ? "cli" : provider == .grokbot ? "bot" : "website"
             }
             let selected = session?.state.selected ?? state.selection.contains(entry.agent.id)
-            return AgentControlAgent(id: controlID(entry), name: session?.name ?? entry.name, kind: kind, visible: visible.contains(entry.id),
+            var agent = AgentControlAgent(id: controlID(entry), name: session?.name ?? entry.name, kind: kind, visible: visible.contains(entry.id),
                                      selected: selected, busy: session.map { webAgents.isBusyForSelection($0) } ?? false)
+            agent.suggestedPrompts = session?.suggestedPrompts
+            return agent
         }
     }
 
@@ -46,8 +48,8 @@ extension AppModel: AgentControlHost {
             guard let session = webAgents.sessions.first(where: { $0.id == id }) else { return [] }
             let offered = comparison.endedAt == nil ? session.actionsForComparison(comparison.id) : nil
             return session.messagesForComparison(comparison.id).map {
-                AgentControlTurn(agent: session.name, outgoing: $0.role == "user", text: $0.text, date: nil, actions: offered?.messageID == $0.id ? offered?.labels : nil,
-                                 actionsId: offered?.messageID == $0.id ? offered?.messageID : nil)
+                AgentControlTurn(agent: session.name, outgoing: $0.role == "user", text: $0.text, date: nil, actions: offered?.labels(for: $0.id),
+                                 actionsId: offered?.labels(for: $0.id) == nil ? nil : offered?.offerID)
             }
         }
         return messages + web

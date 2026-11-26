@@ -107,22 +107,47 @@ struct WebPageScript {
             const asin=e.querySelector('[data-csa-c-nile-action-id^="asin_cards_"]')?.getAttribute('data-csa-c-nile-action-id').match(/^asin_cards_([A-Z0-9]{10})_/)?.[1];
             return [title,price?`$${price[1]}.${price[2]}`:'',rating,blurb,asin?`https://www.amazon.com/dp/${asin}`:''].filter(Boolean).join(' · ');
         };
-        const sparkyMessage = e => {
+        const sparkyRole = e => {
             const id=e.getAttribute('data-testid');
-            if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id||'')) return [];
+            if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id||'')) return null;
             const label=e.querySelector(':scope > div > span.clip')?.textContent.trim();
-            const role=label==='Sent message,' ? 'user' : label==='Received message,' ? 'assistant' : null;
+            return label==='Sent message,' ? 'user' : label==='Received message,' ? 'assistant' : null;
+        };
+        const sparkyMessage = e => {
+            const role=sparkyRole(e),id=e.getAttribute('data-testid');
             if (!role) return [];
             const copy=e.cloneNode(true);
             copy.querySelectorAll('button,[role="button"],time,[role="time"],.clip,svg,style,script').forEach(n=>n.remove());
+            let formattedProducts=false;
+            for (const table of copy.querySelectorAll('[data-testid="product-comparison-table"] table')) {
+                const [header,...attributes]=table.rows;
+                if (!header) continue;
+                const products=[...header.cells].flatMap((cell,column)=>{
+                    const link=cell.querySelector('[data-item-id] a[href]');
+                    if (!link) return [];
+                    const url=new URL(link.getAttribute('href'),location.href);
+                    if (url.origin!==location.origin || !url.pathname.startsWith('/ip/')) return [];
+                    const lines=[normalized(link.textContent)];
+                    for (const row of attributes) {
+                        const name=normalized(row.cells[0]?.textContent||''), value=normalized(row.cells[column]?.textContent||'');
+                        if (name && value) lines.push(name+': '+value);
+                    }
+                    lines.push(url.origin+url.pathname);
+                    return [lines.join('\n')];
+                });
+                if (products.length) { table.replaceWith('\n\n'+products.join('\n\n')+'\n\n'); formattedProducts=true; }
+            }
             const links=new Set();
             for (const a of copy.querySelectorAll('a[href]')) {
                 const u=new URL(a.getAttribute('href'),location.href);
                 if (u.origin===location.origin && u.pathname.startsWith('/ip/')) links.add(u.origin+u.pathname);
             }
-            copy.querySelectorAll('br,p,div,li,th,td').forEach(n=>n.append(' '));
-            const text=[normalized(copy.textContent),...links].filter(Boolean).join('\n');
-            return text ? [{id,role,text}] : [];
+            copy.querySelectorAll('br').forEach(n=>n.replaceWith('\n'));
+            copy.querySelectorAll('p,li,div,tr').forEach(n=>{ n.prepend('\n'); n.append('\n'); });
+            copy.querySelectorAll('th,td').forEach(n=>n.append(' '));
+            const body=copy.textContent.split('\n').map(normalized).join('\n').replace(/\n{3,}/g,'\n\n').trim();
+            const text=[body,...links].filter(Boolean).join('\n');
+            return text ? [{id,role,text,...(formattedProducts ? {formattedProducts:true} : {})}] : [];
         };
         const sparkyConversation = () => {
             const turns=all(config.messages).flatMap(sparkyMessage);
@@ -173,6 +198,55 @@ struct WebPageScript {
             if (alexaActions()?.messageID!==messageID) return null;
             const found=alexaChips().filter(c=>c.label===normalized(label||'')); return found.length===1 ? found[0].element : null;
         };
+        const sparkyCards = () => {
+            const rows=all(config.messages);
+            const lastUser=rows.findLastIndex(row=>sparkyRole(row)==='user');
+            if (lastUser<0) return [];
+            return rows.slice(lastUser+1).filter(row=>sparkyRole(row)==='assistant').flatMap(row=>
+                [...row.querySelectorAll('[role="group"][data-item-id]')].flatMap(card=>{
+                    const id=card.getAttribute('data-item-id');
+                    if (!rendered(card) || !/^\d+$/.test(id) || ![...card.querySelectorAll('a[href]')].some(a=>a.origin===location.origin && a.pathname.startsWith('/ip/') && a.pathname.split('/').filter(Boolean).pop()===id)) return [];
+                    return [{card,id,rowID:row.getAttribute('data-testid')}];
+                }));
+        };
+        const sparkyAddButtons = card => [...card.querySelectorAll('button[data-automation-id="add-to-cart"][aria-label^="Add to cart - "]')].filter(b=>rendered(b) && !b.disabled && b.getAttribute('aria-disabled')!=='true');
+        const sparkyQuantity = card => [...card.querySelectorAll('button[aria-label]')].some(b=>rendered(b) && /^(decrease quantity|remove one|decrement quantity|remove from cart)/i.test(b.getAttribute('aria-label')));
+        const sparkyOffer = () => {
+            const cards=sparkyCards();
+            const choices=cards.flatMap(({card,id,rowID})=>{
+                if (cards.filter(other=>other.id===id).length!==1 || sparkyQuantity(card)) return [];
+                const buttons=sparkyAddButtons(card);
+                if (buttons.length!==1) return [];
+                const label=normalized(buttons[0].getAttribute('aria-label'));
+                return [{id,rowID,label,element:buttons[0]}];
+            }).filter((c,_,all)=>all.filter(o=>o.label===c.label || o.id===c.id).length===1);
+            if (!choices.length) { delete observation.offerSignature; return null; }
+            const messageID=choices.at(-1).rowID;
+            const signature=JSON.stringify([all(config.messages).filter(sparkyRole).at(-1)?.getAttribute('data-testid'),choices.map(c=>[c.rowID,c.id,c.label])]);
+            if (observation.offerSignature!==signature) {
+                observation.offerSignature=signature;
+                observation.offerRevision=crypto.randomUUID();
+            }
+            return {messageID,revision:observation.offerRevision,choices};
+        };
+        const sparkyPrompts = () => {
+            if (all(config.messages).some(row=>sparkyRole(row)==='user')) return [];
+            const panel=editor()?.closest('[data-testid="chat-panel"]');
+            if (!panel) return [];
+            const labels=[...panel.querySelectorAll('button[aria-label]')].filter(b=>rendered(b) && !b.disabled && b.getAttribute('aria-disabled')!=='true')
+                .map(b=>normalized(b.innerText)===b.getAttribute('aria-label') ? normalized(b.innerText) : '').filter(Boolean);
+            return [...new Set(labels)];
+        };
+        const shoppingActions = () => {
+            if (config.provider==='alexaShopping') return alexaActions();
+            const offer=sparkyOffer();
+            return offer ? {messageID:offer.messageID,revision:offer.revision,labels:offer.choices.map(c=>c.label),cartChoices:offer.choices.map(c=>({itemID:c.id,messageID:c.rowID,label:c.label}))} : null;
+        };
+        const shoppingChoice = (label,offerID) => {
+            if (config.provider==='alexaShopping') return alexaChip(label,offerID);
+            const offer=sparkyOffer();
+            return offer?.revision===offerID ? offer.choices.find(c=>c.label===label)?.element : null;
+        };
         const conversationLocation = () => {
             const url=new URL(location.href),params=[...url.searchParams];
             if (config.provider==='alexaShopping' && pathAllowed()) return url.origin+'/';
@@ -219,7 +293,8 @@ struct WebPageScript {
             return {ready,retryable:candidates.length<2,reason:`${config.name}’s Send control is unavailable. Review the prepared draft.`};
         };
         const inspect = () => ({...status(),messages:pathAllowed()?messages():[],submissionInterrupted:observation.interrupted,
-            ...(config.provider==='alexaShopping' && pathAllowed() ? {actions:alexaActions()} : {})});
+            ...(shopping && pathAllowed() ? {actions:shoppingActions()} : {}),
+            ...(config.provider==='sparky' && pathAllowed() ? {suggestedPrompts:sparkyPrompts()} : {})});
         """#
     }
     var signInStatus: String { helpers + "\nreturn {...status(),messages:[]};" }
@@ -384,7 +459,7 @@ struct WebPageScript {
         const before=status();
         if (!before.ready) return {ok:false,reason:before.reason};
         if (before.draft.trim()) return {ok:false,reason:`${config.name} already has a draft. Send or clear it in the page first.`};
-        if (!alexaChip(label,messageID)) return {ok:false,reason:`${config.name} no longer offers that choice.`};
+        if (!shoppingChoice(label,messageID)) return {ok:false,reason:`${config.name} no longer offers that choice.`};
         const baseline=messages();
         const existingConversationPaths=[...document.querySelectorAll('a[href]')].map(a=>new URL(a.href,location.href)).filter(u=>u.origin===location.origin).map(u=>u.pathname);
         observation.interrupted=false;
@@ -394,11 +469,20 @@ struct WebPageScript {
     /// Clicks the page's own suggestion button, so Alexa gets whatever that button sends, not just its words.
     var clickAction: String {
         helpers + #"""
-        const current=status(),chip=alexaChip(label,messageID);
+        const current=status(),chip=shoppingChoice(label,messageID);
         if (!current.ready || current.url!==expectedURL || current.draft.trim() || observation.interrupted)
             return {clicked:false,reason:`${config.name} changed before the choice was made. Nothing was clicked.`};
         if (!chip) return {clicked:false,reason:`${config.name} no longer offers that choice.`};
-        chip.scrollIntoView({block:'nearest'}); chip.click(); return {clicked:true};
+        const selected=config.provider==='sparky' ? sparkyCards().find(c=>c.card===chip.closest('[data-item-id]')) : null;
+        chip.scrollIntoView({block:'nearest'}); chip.click();
+        if (config.provider==='sparky') {
+            for (let i=0;i<20;i++) {
+                await new Promise(resolve=>setTimeout(resolve,200));
+                const matches=sparkyCards().filter(c=>c.id===selected?.id);
+                if (matches.length===1 && matches[0].rowID===selected.rowID && sparkyQuantity(matches[0].card) && !sparkyAddButtons(matches[0].card).length) return {clicked:true,added:true};
+            }
+        }
+        return {clicked:true};
         """#
     }
 
@@ -475,6 +559,8 @@ struct WebPageScript {
         <body><h2>Ask Sparky</h2><small>Local fixture · simulated Walmart conversation</small>
         <div id="chat"><div data-testid="sparky-chat-window"><div data-testid="chat-panel">
         <div data-testid="message-container"><div data-testid="autoscroll" id="turns"></div></div>
+        <div id="welcome"><button aria-label="Compare two reusable water bottles">Compare two reusable water bottles</button>
+        <button aria-label="Plan a birthday party">Plan a birthday party</button></div>
         <textarea aria-label="Message Sparky" data-testid="unified-chat-text-area"></textarea>
         <button aria-label="Send Message" disabled>Send</button></div></div></div>
         <div id="login" hidden><div role="dialog" data-testid="sparky-fab"><button>Sign in</button></div></div>
@@ -488,9 +574,22 @@ struct WebPageScript {
             body.append(role,document.createTextNode(text),time);row.append(body);turns.append(row);return body;
         }
         send.onclick=()=>{
-            turn('Sent message,',input.value);input.value='';input.oninput();
+            document.querySelector('#welcome').hidden=true;turn('Sent message,',input.value);input.value='';input.oninput();
             setTimeout(()=>{const reply=turn('Received message,','The steel bottle keeps water cold. The plastic bottle is lighter. ');
-                const link=document.createElement('a');link.href='/ip/Fixture-bottle/123456';link.textContent='Sample bottle';reply.append(link);},200);
+                const note=document.createElement('div');note.textContent='Compare sizes below.';reply.append(note);
+                const comparison=document.createElement('div');comparison.dataset.testid='product-comparison-table';
+                const table=document.createElement('table'),header=table.insertRow();header.insertCell();
+                for (const [name,id] of [['Steel bottle','123456'],['Plastic bottle','234567']]) {
+                    const card=document.createElement('div');card.setAttribute('role','group');card.dataset.itemId=id;
+                    const link=document.createElement('a');link.href='/ip/Fixture-bottle/'+id;link.textContent=name;
+                    const add=document.createElement('button');add.dataset.automationId='add-to-cart';add.setAttribute('aria-label','Add to cart - '+name);add.textContent='Add';
+                    add.onclick=()=>{add.removeAttribute('data-automation-id');add.setAttribute('aria-label','Decrease quantity for '+name);add.textContent='1 in cart'};
+                    card.append(link,add);header.insertCell().append(card);
+                }
+                for (const values of [['Price','$14.96','$13.88'],['Size','26 oz','32 oz']]) {
+                    const row=table.insertRow();for (const value of values) row.insertCell().textContent=value;
+                }
+                comparison.append(table);reply.append(comparison);},200);
         };
         </script></body></html>
         """#

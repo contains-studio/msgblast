@@ -35,6 +35,7 @@ public struct AgentControlTool: Sendable {
 
 public struct AgentControlAgent: Codable, Equatable, Sendable {
     public var id: String, name: String, kind: String
+    public var suggestedPrompts: [String]?
     public var visible: Bool, selected: Bool, busy: Bool
     public init(id: String, name: String, kind: String, visible: Bool, selected: Bool, busy: Bool) {
         self.id = id; self.name = name; self.kind = kind; self.visible = visible; self.selected = selected; self.busy = busy
