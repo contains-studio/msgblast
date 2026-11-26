@@ -216,6 +216,26 @@ final class WantsTests: XCTestCase {
         await wait.value
     }
 
+    func testLateUnauthorizedResponseDoesNotInvalidateRotatedCredential() async throws {
+        actor Token {
+            var value = "original"
+            func current() -> String {
+                defer { value = "rotated" }
+                return value
+            }
+        }
+        let token = Token()
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [WantStub.self]
+        WantStub.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer original")
+            return (401, [:], Data())
+        }
+        let client = WantMCPClient(endpoint: endpoint, session: URLSession(configuration: config)) { await token.current() }
+        do { try await client.answer(questionID: "q", text: "yes"); XCTFail("The rejected write cannot succeed") }
+        catch WantError.server { }
+    }
+
     func testChangedAccountDoesNotSendPendingMutation() async throws {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [WantStub.self]

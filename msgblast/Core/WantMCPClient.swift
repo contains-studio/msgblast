@@ -144,11 +144,13 @@ public struct WantMCPClient: WantService {
         request.setValue(Self.protocolVersion, forHTTPHeaderField: "MCP-Protocol-Version")
         request.setValue(method, forHTTPHeaderField: "Mcp-Method")
         if method == "tools/call" || method.hasPrefix("events/"), let name = params["name"] as? String { request.setValue(name, forHTTPHeaderField: "Mcp-Name") }
-        if let token = try await token() { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        let bearer = try await token()
+        if let bearer { request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization") }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw WantError.invalidResponse }
         if http.statusCode == 403 { throw WantError.server("The Want MCP did not allow that request.") }
         if http.statusCode == 401 {
+            guard try await token() == bearer else { throw WantError.server("The request used an expired sign-in. Refresh Wants to see its current state.") }
             throw WantError.unauthorized(resourceMetadata: WantOAuth.resourceMetadata(http.value(forHTTPHeaderField: "WWW-Authenticate")))
         }
         let message = try Self.message(data, contentType: http.value(forHTTPHeaderField: "Content-Type"), id: id)
