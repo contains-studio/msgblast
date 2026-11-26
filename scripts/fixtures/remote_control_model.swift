@@ -67,6 +67,7 @@ extension SideChatModelCheck {
         precondition(wants.saved.cursors[WantsModel.activity] == nil)
         try FileManager.default.removeItem(at: file)
         try oldSettings.write(to: file)
+        try checkForwardingRevocationAfterWriteFailure(model, file: file)
         let saved = await wants.take(page)
         precondition(saved && wants.saved.blasts[itemID] == nil && wants.saved.forwardedConversations[itemID] != nil)
         let after = model.agentSendActivity.log.entries.count
@@ -84,6 +85,19 @@ extension SideChatModelCheck {
         let restored = WantsModel(app: model)
         precondition(!restored.saved.forwardActivity && restored.saved.forwardAgents.isEmpty && restored.saved.forwardedConversations.isEmpty)
         print("PASS: Wants saves the cursor before forwarding, keeps answers with explicitly asked agents, and revokes queued sends when forwarding changes.")
+    }
+
+    @MainActor static func checkForwardingRevocationAfterWriteFailure(_ model: AppModel, file: URL) throws {
+        let oldSettings = try Data(contentsOf: file)
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        model.wants.setForwarding(false)
+        precondition(!model.wants.saved.forwardActivity)
+        try FileManager.default.removeItem(at: file)
+        try oldSettings.write(to: file)
+        precondition(!WantsModel(app: model).saved.forwardActivity, "A stale on-disk preference must not override revoked consent")
+        model.wants.setForwarding(true)
+        precondition(WantsModel(app: model).saved.forwardActivity, "New explicit consent must survive relaunch")
     }
 
     @MainActor static func checkRevokedForward(_ model: AppModel, event: WantEvent) async throws {

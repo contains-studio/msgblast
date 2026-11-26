@@ -71,6 +71,10 @@ import msgblastRemoteProtocol
     private var refreshing: Task<String, Error>?
     private lazy var sends = AgentControlSends(model: app, source: .wants)
     private let keychain: WantKeychain
+    private var forwardingGrant: String { saved.grantID?.uuidString ?? "unbound" }
+    private var forwardingRevoked: Bool {
+        UserDefaults.standard.string(forKey: keychain.forwardingRevocationKey) == forwardingGrant
+    }
 
     init(app: AppModel) {
         self.app = app
@@ -96,6 +100,7 @@ import msgblastRemoteProtocol
             }
             connectService()
         }
+        if forwardingRevoked { saved.forwardActivity = false }
     }
 
     func start() {
@@ -374,10 +379,12 @@ import msgblastRemoteProtocol
 
     func setForwarding(_ on: Bool, agents: [String]? = nil) {
         forwardingRevision += 1
+        if !on { UserDefaults.standard.set(forwardingGrant, forKey: keychain.forwardingRevocationKey) }
         let persisted = update { saved in
             saved.forwardActivity = on
             if let agents { saved.forwardAgents = agents }
         }
+        if persisted && on { UserDefaults.standard.removeObject(forKey: keychain.forwardingRevocationKey) }
         if !persisted && !on { saved.forwardActivity = false }
     }
 
@@ -387,14 +394,14 @@ import msgblastRemoteProtocol
         let asked = itemID.flatMap { saved.blasts[$0] }
         let targets = WantForwarding.recipients(for: event, enabled: saved.forwardActivity, itemAgents: asked?.agents,
                                                 defaults: saved.forwardAgents, sendable: Set(agents.map(\.id)))
+        let remote = targets.compactMap(AgentControlSend.remoteID)
         let authorized: @MainActor () -> Bool = {
-            session == self.session && revision == self.forwardingRevision && self.saved.forwardActivity
+            session == self.session && revision == self.forwardingRevision && self.saved.forwardActivity && !self.forwardingRevoked
                 && itemID.flatMap { self.saved.blasts[$0] } == asked
         }
-        guard !targets.isEmpty, authorized() else { return }
+        guard !remote.isEmpty, remote.count == targets.count, authorized() else { return }
         sendsInFlight += 1
         defer { sendsInFlight -= 1 }
-        let remote = targets.compactMap(AgentControlSend.remoteID)
         if let id = asked?.comparisonID, let comparison = app.comparison(id), comparison.endedAt == nil {
             let result = await send(.sendShared(conversationID: id, text: text, agentIDs: remote, attachmentIDs: []), quietly: true, isAuthorized: authorized)
             guard let result, result.outcome == .rejected,
@@ -436,6 +443,7 @@ struct WantKeychain {
     let directory: URL
     let endpoint: URL
     private var account: String { SHA256.hash(data: Data(directory.standardizedFileURL.path.utf8)).map { String(format: "%02x", $0) }.joined() }
+    var forwardingRevocationKey: String { "WantMCPForwardingRevoked." + account }
     private var signedOutKey: String { "WantMCPSignedOut." + account }
 
     func read() -> WantCredential? {
