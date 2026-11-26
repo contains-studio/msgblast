@@ -84,7 +84,7 @@ Connections use separate transports:
 | --- | --- |
 | Messages | Existing one-to-one iMessage chats, read-only history, and Apple Events submission |
 | App Agents | Installed native Muse, Grok Bot, Wabi, ChatGPT, Dots and Claude apps, with verified destinations and per-comparison receipts |
-| Websites | Muse, ChatGPT, Claude, Grok, Dots, rabbit OS3, Hark, Alexa Shopping, and Walmart Sparky inside persistent WebKit stores |
+| Websites | Muse, ChatGPT, Claude, Grok, Dots, rabbit OS3, Hark, Alexa Shopping, and Walmart Shopping Agent inside persistent WebKit stores |
 | Optional CLI conversations | Separate Codex CLI / Claude Code agents using installed CLI accounts, configured tools, and saved sessions |
 | Grok Bot | Direct webhook call and authenticated reply through a temporary bundled cloudflared tunnel |
 | Remote control (optional) | One paired phone over Tailscale or the LAN, encrypted end to end; the Mac executes every send |
@@ -169,7 +169,7 @@ the live page and draft, and uncertain sends are never automatically retried.
 Amazon's home URL cannot establish chat identity after a reload. An uncertain
 attempt remains unresolved when its original document can no longer be verified.
 
-Walmart Sparky opens Walmart’s homepage in a separate website profile. Sign in
+Walmart Shopping Agent opens Walmart’s homepage in a separate website profile. Sign in
 and open **Ask Sparky**. Shared questions use the **Message Sparky** field.
 msgblast reads the chat’s sent and received turns and includes Walmart product
 links in the transcript. Comparisons share the open Walmart chat. If Walmart

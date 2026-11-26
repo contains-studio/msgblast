@@ -27,7 +27,7 @@ final class WebServiceWorkflowTests: XCTestCase {
         app.launchArguments = ["--demo", "--isolated-demo"]
         app.launch()
         defer { app.terminate() }
-        selectShoppingAgent("Walmart Sparky", in: app)
+        selectShoppingAgent("Walmart Shopping Agent", in: app)
         let editor = app.textViews["Shared prompt"]
         editor.click()
         editor.typeKey("a", modifierFlags: .command)
