@@ -118,7 +118,8 @@ struct WebPageScript {
             if (!role) return [];
             const copy=e.cloneNode(true);
             copy.querySelectorAll('button,[role="button"],time,[role="time"],.clip,svg,style,script').forEach(n=>n.remove());
-            let formattedProducts=false;
+            const productCards=[];
+            const liveCards=[...e.querySelectorAll('[role=group][data-item-id]')];
             for (const table of copy.querySelectorAll('[data-testid="product-comparison-table"] table')) {
                 const [header,...attributes]=table.rows;
                 if (!header) continue;
@@ -127,15 +128,29 @@ struct WebPageScript {
                     if (!link) return [];
                     const url=new URL(link.getAttribute('href'),location.href);
                     if (url.origin!==location.origin || !url.pathname.startsWith('/ip/')) return [];
-                    const lines=[normalized(link.textContent)];
+                    const name=normalized(link.textContent), lines=[name];
+                    const itemID=link.closest('[data-item-id]').getAttribute('data-item-id');
+                    if (!/^\d+$/.test(itemID) || url.pathname.split('/').pop()!==itemID) return [];
                     for (const row of attributes) {
                         const name=normalized(row.cells[0]?.textContent||''), value=normalized(row.cells[column]?.textContent||'');
                         if (name && value) lines.push(name+': '+value);
                     }
-                    lines.push(url.origin+url.pathname);
-                    return [lines.join('\n')];
+                    const productURL=url.origin+url.pathname;
+                    lines.push(productURL);
+                    const text=lines.join('\n'), cards=liveCards.filter(card=>card.getAttribute('data-item-id')===itemID);
+                    const card=cards.length===1 ? cards[0] : null;
+                    const img=card?.querySelector('img');
+                    const src=img?.currentSrc || img?.src;
+                    let imageURL;
+                    if (src) {
+                        const photo=new URL(src,location.href);
+                        if (photo.origin==='https://i5.walmartimages.com' && !photo.username && !photo.password && /^\/(asr|seo)\//.test(photo.pathname)) imageURL=photo.href;
+                    }
+                    const action=card?.querySelector('button[data-automation-id="add-to-cart"]')?.getAttribute('aria-label');
+                    productCards.push({name,url:productURL,text,imageURL,action});
+                    return [text];
                 });
-                if (products.length) { table.replaceWith('\n\n'+products.join('\n\n')+'\n\n'); formattedProducts=true; }
+                if (products.length) table.replaceWith('\n\n'+products.join('\n\n')+'\n\n');
             }
             const links=new Set();
             for (const a of copy.querySelectorAll('a[href]')) {
@@ -147,7 +162,7 @@ struct WebPageScript {
             copy.querySelectorAll('th,td').forEach(n=>n.append(' '));
             const body=copy.textContent.split('\n').map(normalized).join('\n').replace(/\n{3,}/g,'\n\n').trim();
             const text=[body,...links].filter(Boolean).join('\n');
-            return text ? [{id,role,text,...(formattedProducts ? {formattedProducts:true} : {})}] : [];
+            return text ? [{id,role,text,...(productCards.length ? {formattedProducts:true,products:productCards} : {})}] : [];
         };
         const sparkyConversation = () => {
             const turns=all(config.messages).flatMap(sparkyMessage);

@@ -17,9 +17,9 @@ public struct RemoteProjectionInput: Sendable {
     public var webAttempts: [UUID: [WebAgentID: [WebSendAttempt]]]
     public var canEnd: [UUID: Bool]
     public var reports: [UUID: RemoteReport]
-    /// Alexa product image URL → file already on disk. Missing entries are still downloading.
+    /// Product image URL → file already on disk. Missing entries are still downloading.
     public var webImages: [String: MessageAttachment] = [:]
-    /// comparison → agent → suggestion buttons under its newest reply (Alexa only).
+    /// comparison → agent → suggestion buttons under its newest reply (shopping websites).
     public var webActions: [UUID: [WebAgentID: WebPageActions]] = [:]
     public init(macStatus: MacStatus, gridAgentIDs: [String], agents: [AgentAvailability], comparisons: [Comparison], messagesTranscripts: [UUID: [UUID: [Message]]] = [:],
                 webHistories: [UUID: [WebAgentID: [WebPageMessage]]] = [:], webAttempts: [UUID: [WebAgentID: [WebSendAttempt]]] = [:], canEnd: [UUID: Bool] = [:], reports: [UUID: RemoteReport] = [:]) {
@@ -44,15 +44,18 @@ public struct RemoteProjectionInput: Sendable {
             webAttempts[comparison.id] = attempts
             canEnd[comparison.id] = comparison.endedAt == nil && endable
         }
-        let urls = alexaProductImageURLs()
+        let urls = productImageURLs()
         imageCache?.prefetch(urls)
         webImages = imageCache?.attachments(for: urls) ?? [:]
     }
 
-    /// Product photo URLs from Alexa cards only. Other agents never contribute images.
-    func alexaProductImageURLs() -> [String] {
+    /// Only the shopping adapters contribute product photos.
+    func productImageURLs() -> [String] {
         webHistories.values.flatMap { agents in
             agents.flatMap { agent, messages -> [String] in
+                if agent.provider == .sparky {
+                    return messages.flatMap { $0.products ?? [] }.compactMap { $0.imageURL.flatMap(WebImageURL.walmart)?.absoluteString }
+                }
                 guard agent.provider == .alexaShopping else { return [] }
                 return messages.flatMap { $0.images ?? [] }
             }
@@ -179,19 +182,52 @@ public enum RemoteProjectionBuilder {
         for agent in comparison.resolvedWebAgentIDs {
             // Native transcripts carry stable ids. Website DOM ids may be synthetic, so a
             // website turn is keyed by its position; a re-render or a growing reply is an update.
-            for (ordinal, message) in (input.webHistories[cid]?[agent] ?? []).enumerated() {
-                let key = agent.provider.usesNativeConversation ? message.id : String(ordinal)
-                let images = downloadedImages(message, input: input)
-                let offered = input.webActions[cid]?[agent].flatMap { $0.messageID == message.id ? $0 : nil }
-                turns.append(RemoteTurn(id: "w:\(agent.id):\(cid.uuidString):\(key)", conversationID: cid, agentID: agent.id, role: role(message.role), origin: .agentTranscript,
-                                        text: message.text, created: nil, ordinal: ordinal, attachments: refs(images), contentHash: hash(message.text),
-                                        actions: offered?.labels, actionsID: offered?.offerID))
+            for (ordinal, row) in webRows(input, comparison: cid, agent: agent).enumerated() {
+                let offered = input.webActions[cid]?[agent].flatMap { $0.messageID == row.message.id ? $0 : nil }
+                let choices = offered?.labels.filter { row.product == nil || row.product?.action == $0 }
+                turns.append(RemoteTurn(id: row.id, conversationID: cid, agentID: agent.id, role: role(row.message.role), origin: .agentTranscript,
+                                        text: row.text, created: nil, ordinal: ordinal, attachments: refs(row.files), contentHash: hash(row.text),
+                                        actions: row.isProse ? nil : choices, actionsID: offered?.offerID))
             }
             for attempt in input.webAttempts[cid]?[agent] ?? [] {
                 conversationAttempts.append(RemoteAttempt(id: "wa:\(attempt.id.uuidString)", conversationID: cid, agentID: agent.id, text: attempt.text,
                                                           status: status(attempt.status), detail: attempt.detail, created: attempt.created))
                 activity = max(activity, attempt.created)
             }
+        }
+    }
+
+    private struct WebRow {
+        let id: String
+        let message: WebPageMessage
+        let text: String
+        var files: [MessageAttachment] = []
+        var product: WebShoppingProduct?
+        var isProse = false
+    }
+
+    private static func webRows(_ input: RemoteProjectionInput, comparison: UUID, agent: WebAgentID) -> [WebRow] {
+        (input.webHistories[comparison]?[agent] ?? []).enumerated().flatMap { ordinal, message -> [WebRow] in
+            let key = agent.provider.usesNativeConversation ? message.id : String(ordinal)
+            let id = "w:\(agent.id):\(comparison.uuidString):\(key)"
+            if agent.provider == .sparky, let products = message.products, !products.isEmpty {
+                var rows: [WebRow] = []
+                var remaining = message.text[...]
+                for product in products {
+                    guard let match = remaining.range(of: product.text), !product.text.isEmpty else { break }
+                    let prose = remaining[..<match.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !prose.isEmpty { rows.append(WebRow(id: "\(id):before:\(product.url)", message: message, text: prose, isProse: true)) }
+                    let file = product.imageURL.flatMap { WebImageURL.walmart($0) == nil ? nil : input.webImages[$0] }
+                    rows.append(WebRow(id: "\(id):product:\(product.url)", message: message, text: product.text, files: file.map { [$0] } ?? [], product: product))
+                    remaining = remaining[match.upperBound...]
+                }
+                if rows.compactMap(\.product).count == products.count, Set(rows.map(\.id)).count == rows.count {
+                    let tail = remaining.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !tail.isEmpty { rows.append(WebRow(id: id + ":tail", message: message, text: tail, isProse: true)) }
+                    return rows
+                }
+            }
+            return [WebRow(id: id, message: message, text: message.text, files: downloadedImages(message, input: input))]
         }
     }
 
@@ -203,13 +239,8 @@ public enum RemoteProjectionBuilder {
 
     /// Same turn ids as `appendWebAgents`, and only files that have finished downloading.
     private static func recordWebImages(_ input: RemoteProjectionInput, comparison: UUID, into files: inout [String: [MessageAttachment]]) {
-        for (agent, messages) in input.webHistories[comparison] ?? [:] {
-            for (ordinal, message) in messages.enumerated() {
-                let attached = downloadedImages(message, input: input)
-                if attached.isEmpty { continue }
-                let key = agent.provider.usesNativeConversation ? message.id : String(ordinal)
-                files["w:\(agent.id):\(comparison.uuidString):\(key)"] = attached
-            }
+        for agent in input.webHistories[comparison]?.keys ?? [:].keys {
+            for row in webRows(input, comparison: comparison, agent: agent) where !row.files.isEmpty { files[row.id] = row.files }
         }
     }
 

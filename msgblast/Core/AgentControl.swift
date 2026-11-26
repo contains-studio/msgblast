@@ -56,6 +56,7 @@ public struct AgentControlTurn: Codable, Equatable, Sendable {
     /// reply has them, while msgblast could tap one; pick one with msgblast_agent_choose.
     public var actions: [String]?
     /// Names this offer of `actions`; msgblast_agent_choose needs it, so a choice is never made under a newer reply.
+    public var products: [WebShoppingProduct]?
     public var actionsId: String?
     public init(agent: String, outgoing: Bool, text: String, date: Date?, actions: [String]? = nil, actionsId: String? = nil) {
         self.agent = agent; self.outgoing = outgoing; self.text = text; self.date = date

@@ -2,16 +2,22 @@ import CryptoKit
 import Foundation
 import os
 
-/// HTTPS Amazon CDN hosts used for Alexa product photos. The page script uses the same allowlist.
+/// Product-photo CDN URLs accepted by the shopping page adapters.
 public enum WebImageURL {
     public static func allowed(_ string: String) -> URL? {
         guard let url = URL(string: string), url.scheme == "https", let host = url.host?.lowercased() else { return nil }
         let amazon = host == "m.media-amazon.com" || host == "images-na.ssl-images-amazon.com" || host.hasSuffix(".media-amazon.com")
-        return amazon ? url : nil
+        return amazon || walmart(string) != nil ? url : nil
+    }
+    public static func walmart(_ string: String) -> URL? {
+        guard let url = URL(string: string), url.scheme == "https", url.host?.lowercased() == "i5.walmartimages.com",
+              url.user == nil, url.password == nil, url.port == nil || url.port == 443,
+              url.path.hasPrefix("/asr/") || url.path.hasPrefix("/seo/") else { return nil }
+        return url
     }
 }
 
-/// Downloads Alexa product images off the send path and remembers failures so a projection refresh does not retry immediately.
+/// Downloads shopping product images off the send path and remembers failures so a projection refresh does not retry immediately.
 @MainActor
 public final class WebImageCache {
     public static let maxByteCount = 2 * 1024 * 1024
