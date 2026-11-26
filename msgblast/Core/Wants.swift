@@ -150,7 +150,7 @@ public enum WantPrompt {
             "Link: \(list.url(for: item))\(list.isPrivate ? " (private: only I and my connected agents can open it)" : "")",
             "",
             "If you are connected to The Want MCP: \(connected)",
-            "If you are not connected, reply here with \(format.reply). To connect, add the MCP server https://mcp.wantmcp.com/mcp (\(connectURL)).",
+            "If you are not connected, reply here with \(format.reply). To connect, set up wantmcp.com for keeping track of the things I want.",
         ] + (posted.isEmpty ? [] : ["", "Already posted:"] + posted.map { "- \($0)" })).joined(separator: "\n")
     }
 }

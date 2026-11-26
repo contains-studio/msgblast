@@ -126,6 +126,8 @@ final class WantsTests: XCTestCase {
         XCTAssertTrue(prompt.contains("Link: https://wantmcp.com/l/lst_1#itm_1"))
         XCTAssertTrue(prompt.contains("get_item_entries"), "connected agents check existing entries first")
         XCTAssertTrue(prompt.contains("If you are not connected, reply here"))
+        XCTAssertTrue(prompt.contains("set up wantmcp.com for keeping track of the things I want"), "the sentence wantmcp.com teaches")
+        XCTAssertFalse(prompt.contains("suggest_entry"), "posting is add_entry only")
         XCTAssertTrue(prompt.contains("- ANC headphones, Example, $249.00"), "unconnected agents still see what is posted")
     }
 
@@ -252,6 +254,23 @@ final class WantsLiveTests: XCTestCase {
         _ = try await client.suggestions(listID: list.id)
         if let item = list.items?.first { _ = try await client.entries(itemID: item.id) }
         _ = try await client.poll("list.activity", cursor: nil)
+    }
+
+    /// Asks a question on the key's first item as an agent would, then answers it as the panel does.
+    func testAnswerAQuestionOnALiveServer() async throws {
+        let client = try keyed()
+        let ids = try await client.writableListIDs()
+        let id = try XCTUnwrap(ids.first)
+        let before = try await client.list(id)
+        let item = try XCTUnwrap(before.items?.first { $0.openQuestion == nil })
+        _ = try await client.tool("ask_owner", ["item_id": item.id, "question": "Electric or stovetop?", "options": ["Electric", "Stovetop"]])
+        let asked = try await client.list(id).items?.first { $0.id == item.id }
+        XCTAssertEqual(asked?.status, "waiting_on_owner")
+        let question = try XCTUnwrap(asked?.openQuestion)
+        XCTAssertEqual(question.options, ["Electric", "Stovetop"])
+        try await client.answer(questionID: question.id, text: "Electric")
+        let answered = try await client.list(id).items?.first { $0.id == item.id }
+        XCTAssertNil(answered?.openQuestion)
     }
 
     /// Adds one item to the key's list.
