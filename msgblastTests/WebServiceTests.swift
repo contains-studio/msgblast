@@ -33,6 +33,29 @@ final class WebServiceTests: XCTestCase {
         XCTAssertTrue(newChat?.detail?.contains("original Sparky chat") == true)
     }
 
+    func testSparkyImportsWalmartCookiesAndRecoversAfterAnUnansweredTurn() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .sparky, storageURL: directory.appendingPathComponent("state.json"), fixture: true)
+        defer { session.beginShutdown() }
+        let cookies = [".walmart.com", ".other.test"].compactMap { domain in
+            HTTPCookie(properties: [.domain: domain, .path: "/", .name: "test", .value: "fixture"])
+        }
+        let count = try await session.registerBrowserCookies(cookies)
+        XCTAssertEqual(count, 1)
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        _ = try await session.webView.evaluateJavaScript("turn('Sent message,','Unanswered question')")
+        await session.refresh()
+        XCTAssertFalse(session.snapshot.ready)
+        _ = try await session.webView.callAsyncJavaScript(
+            "const now=Date.now.bind(Date); Date.now=()=>now()+121000;",
+            arguments: [:], in: nil, contentWorld: .defaultClient)
+        await session.refresh()
+        XCTAssertTrue(session.snapshot.ready)
+        XCTAssertEqual(session.snapshot.messages.map(\.text), ["Unanswered question"])
+    }
+
     func testSparkySignInPromptIgnoresStorefrontInputs() async throws {
         let page = WKWebView()
         page.loadHTMLString("""
