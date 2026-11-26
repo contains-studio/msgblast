@@ -12,7 +12,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
         switch self { case .museApp: .muse; case .grokBotApp: .grokBot; case .wabi: .wabi; case .geminiApp: .gemini; case .chatgptApp: .chatgpt; case .dotsApp: .dots; case .claudeApp: .claude; default: nil }
     }
     public var id: String { rawValue }
-    public var supportsSharedSubmissions: Bool { self != .hark && self != .sparky }
+    public var supportsSharedSubmissions: Bool { self != .hark }
     public var usesNativeConversation: Bool { personalAgentProvider != nil || self == .grokbot || desktopApp != nil }
     public var supportsCopies: Bool { [.muse, .chatgpt, .claude, .grok].contains(self) }
     /// Native app authentication is owned by that app. Extra accounts use its website integration.
@@ -47,17 +47,18 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
     var localConversationDirectoryName: String {
         switch self { case .codexCLI: "chatgpt"; case .claudeCode: "claude"; default: rawValue }
     }
-    public var sharesOneConversation: Bool { self == .os3 || self == .alexaShopping || self == .dotsApp || (desktopApp != nil && ![.museApp, .geminiApp, .chatgptApp, .dotsApp, .claudeApp].contains(self)) }
+    public var sharesOneConversation: Bool { self == .os3 || isShoppingWebsite || self == .dotsApp || (desktopApp != nil && ![.museApp, .geminiApp, .chatgptApp, .dotsApp, .claudeApp].contains(self)) }
+    var isShoppingWebsite: Bool { self == .alexaShopping || self == .sparky }
     public var newChatURL: URL { self == .muse ? URL(string: "https://muse.ai/thread/new")! : homeURL }
     var browserCookieHost: String { self == .alexaShopping ? "amazon.com" : homeURL.host! }
     public func isSavedConversation(_ url: URL) -> Bool {
-        if self == .alexaShopping { return isChatURL(url) }
+        if isShoppingWebsite { return isChatURL(url) }
         guard isChatURL(url), url.query == nil, url.fragment == nil else { return false }
         return sharesOneConversation || (!url.path.isEmpty && url.path != "/" && url.path != newChatURL.path && (self != .dots || url.path != "/dots/"))
     }
     // A Grok response selector is not part of the persistent conversation identity.
     public func canonicalConversationURL(_ url: URL) -> URL? {
-        if self == .alexaShopping { return isChatURL(url) ? homeURL : nil }
+        if isShoppingWebsite { return isChatURL(url) ? homeURL : nil }
         guard isChatURL(url), var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
         if self == .grok, let items = parts.queryItems, items.count == 1,
            items[0].name == "rid", let value = items[0].value, value.utf8.count == 36, UUID(uuidString: value) != nil {
@@ -73,7 +74,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
               url.port == nil || url.port == 443 else { return false }
         let path = url.path
         switch self {
-        case .sparky, .codexCLI, .claudeCode, .grokbot, .museApp, .grokBotApp, .wabi, .geminiApp, .chatgptApp, .dotsApp, .claudeApp: return false
+        case .codexCLI, .claudeCode, .grokbot, .museApp, .grokBotApp, .wabi, .geminiApp, .chatgptApp, .dotsApp, .claudeApp: return false
         case .muse:
             return url.query == nil && url.fragment == nil && (path == "/thread/new" ||
                 path.range(of: #"^/thread/[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$"#, options: .regularExpression) != nil)
@@ -86,7 +87,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
         case .alexaShopping:
             let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
             return ["", "/", "/ref=nav_logo", "/ref=nav_signin"].contains(path) && url.fragment == nil && items.allSatisfy { ["ref", "ref_"].contains($0.name) }
-        case .hark: return url.query == nil && url.fragment == nil && path == "/chat"
+        case .hark, .sparky: return url.query == nil && url.fragment == nil && path == homeURL.path
         case .os3: return path.isEmpty || path == "/"
         }
     }

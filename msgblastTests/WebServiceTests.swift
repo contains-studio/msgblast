@@ -5,6 +5,31 @@ import msgblastRemoteProtocol
 
 @MainActor
 final class WebServiceTests: XCTestCase {
+    func testSparkyFollowUpUsesTheSameTurnsAndKeepsProductLinks() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .sparky, storageURL: directory.appendingPathComponent("state.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let comparison = UUID()
+        let first = await session.send("Compare two reusable water bottles", comparisonID: comparison)
+        XCTAssertEqual(first?.status, .observed)
+        try await waitFor { session.messagesForComparison(comparison).last?.text.contains("https://www.walmart.com/ip/Fixture-bottle/123456") == true }
+        let second = await session.send("Which one is lighter?", comparisonID: comparison)
+        XCTAssertEqual(second?.status, .observed)
+        try await waitFor { session.messagesForComparison(comparison).count == 4 }
+        _ = try await session.webView.evaluateJavaScript("document.querySelector('textarea').value='My own draft'")
+        let blocked = await session.send("Another question", comparisonID: comparison)
+        XCTAssertEqual(blocked?.status, .notSent)
+        let draft = try await session.webView.evaluateJavaScript("document.querySelector('textarea').value")
+        XCTAssertEqual(draft as? String, "My own draft")
+        _ = try await session.webView.evaluateJavaScript("document.querySelector('textarea').value='';document.querySelector('#turns').replaceChildren()")
+        let newChat = await session.send("Follow up in the original chat", comparisonID: comparison)
+        XCTAssertEqual(newChat?.status, .notSent)
+        XCTAssertTrue(newChat?.detail?.contains("original Sparky chat") == true)
+    }
+
     func testSparkySignInPromptIgnoresStorefrontInputs() async throws {
         let page = WKWebView()
         page.loadHTMLString("""

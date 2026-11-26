@@ -10,16 +10,11 @@ struct WebPageScript {
         case .codexCLI, .claudeCode, .grokbot, .museApp, .grokBotApp, .wabi, .geminiApp, .chatgptApp, .dotsApp, .claudeApp: preconditionFailure("Native agents do not use page scripts")
         case .muse: return MusePageScript.helpers
         case .sparky:
-            return #"""
-            const status = () => {
-                const login = [...document.querySelectorAll('[role="dialog"][data-testid="sparky-fab"] button')]
-                    .some(b => b.innerText.trim() === 'Sign in' && b.checkVisibility());
-                return {url:location.href,ready:false,signedIn:login ? false : null,draft:'',draftAvailable:false,
-                    reason:login ? 'Sign in using the button in Sparky.' : 'Open Ask Sparky on Walmart.'};
-            };
-            const inspect = () => ({...status(),messages:[]});
-            const submissionStatus = status;
-            """#
+            let panel = #"[data-testid="sparky-chat-window"] [data-testid="chat-panel"]"#
+            selectors = (panel + #" textarea[data-testid="unified-chat-text-area"][aria-label="Message Sparky"]"#,
+                         panel + #" button[aria-label="Send Message"]"#,
+                         panel + #" [data-testid="message-container"] [data-testid="autoscroll"] > [data-testid]"#,
+                         panel + #" textarea[aria-label="Message Sparky"]"#)
         case .hark:
             // The authenticated layout is not verified. Recognize a chat composer
             // for setup, but never insert text, click Send, or infer receipts.
@@ -88,14 +83,15 @@ struct WebPageScript {
         // Kept in WebKit's isolated world, never in page storage. Node identities survive
         // visibility and history-order changes; replacing old nodes invalidates continuity.
         const observation = globalThis.__msgblastObservation ??= {ids:new WeakMap(),nextID:0,interrupted:false};
-        if(config.provider==='alexaShopping') observation.documentID??=crypto.randomUUID();
+        const shopping=config.provider==='alexaShopping'||config.provider==='sparky';
+        if(shopping) observation.documentID??=crypto.randomUUID();
         if (!observation.listening) {
             observation.listening=true;
             for (const event of ['pointerdown','keydown','input','popstate'])
-                window.addEventListener(event,e=>{if(e.isTrusted) {observation.interrupted=true;if(config.provider==='alexaShopping')observation.interactionRevision=(observation.interactionRevision||0)+1;}},true);
+                window.addEventListener(event,e=>{if(e.isTrusted) {observation.interrupted=true;if(shopping)observation.interactionRevision=(observation.interactionRevision||0)+1;}},true);
         }
         const pathAllowed = () => location.protocol==='https:' && location.hostname===config.host &&
-            (config.provider==='alexaShopping' ? (['/','/ref=nav_logo','/ref=nav_signin'].includes(location.pathname) && !location.hash && [...new URLSearchParams(location.search).keys()].every(k=>['ref','ref_'].includes(k))) : config.provider==='dots' ? (location.pathname==='/dots/home' || /^\/dots\/[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(location.pathname)) : config.provider==='claude' ? /^\/(new|chat\/[a-zA-Z0-9-]+)\/?$/.test(location.pathname) : /^(\/|\/c\/[a-zA-Z0-9-]+\/?)$/.test(location.pathname));
+            (config.provider==='sparky' ? location.href==='https://www.walmart.com/' : config.provider==='alexaShopping' ? (['/','/ref=nav_logo','/ref=nav_signin'].includes(location.pathname) && !location.hash && [...new URLSearchParams(location.search).keys()].every(k=>['ref','ref_'].includes(k))) : config.provider==='dots' ? (location.pathname==='/dots/home' || /^\/dots\/[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(location.pathname)) : config.provider==='claude' ? /^\/(new|chat\/[a-zA-Z0-9-]+)\/?$/.test(location.pathname) : /^(\/|\/c\/[a-zA-Z0-9-]+\/?)$/.test(location.pathname));
         // Alexa shows each product as its own section with no links; read it as one line the phone can show.
         const alexaImage = raw => { try { const u=new URL(raw); const h=u.hostname; return u.protocol==='https:' && (h==='m.media-amazon.com' || h==='images-na.ssl-images-amazon.com' || h.endsWith('.media-amazon.com')) ? u.href : ''; } catch { return ''; } };
         const alexaProduct = e => {
@@ -111,7 +107,29 @@ struct WebPageScript {
             const asin=e.querySelector('[data-csa-c-nile-action-id^="asin_cards_"]')?.getAttribute('data-csa-c-nile-action-id').match(/^asin_cards_([A-Z0-9]{10})_/)?.[1];
             return [title,price?`$${price[1]}.${price[2]}`:'',rating,blurb,asin?`https://www.amazon.com/dp/${asin}`:''].filter(Boolean).join(' · ');
         };
-        const messages = () => [...document.querySelectorAll(config.messages)].filter(e => !e.parentElement?.closest(config.messages)).map(e => {
+        const sparkyMessage = e => {
+            const id=e.getAttribute('data-testid');
+            if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id||'')) return [];
+            const label=e.querySelector(':scope > div > span.clip')?.textContent.trim();
+            const role=label==='Sent message,' ? 'user' : label==='Received message,' ? 'assistant' : null;
+            if (!role) return [];
+            const copy=e.cloneNode(true);
+            copy.querySelectorAll('button,[role="button"],.clip,svg,style,script').forEach(n=>n.remove());
+            const links=new Set();
+            for (const a of copy.querySelectorAll('a[href]')) {
+                const u=new URL(a.getAttribute('href'),location.href);
+                if (u.origin===location.origin && u.pathname.startsWith('/ip/')) links.add(u.origin+u.pathname);
+            }
+            copy.querySelectorAll('br,p,div,li,th,td').forEach(n=>n.append(' '));
+            const text=[normalized(copy.textContent),...links].filter(Boolean).join('\n');
+            return text ? [{id,role,text}] : [];
+        };
+        const sparkyConversation = () => {
+            const turns=all(config.messages).flatMap(sparkyMessage);
+            const first=turns.findIndex(m=>m.role==='user');
+            return first<0 ? [] : turns.slice(first);
+        };
+        const messages = () => config.provider==='sparky' ? sparkyConversation() : [...document.querySelectorAll(config.messages)].filter(e => !e.parentElement?.closest(config.messages)).map(e => {
             let role=e.getAttribute('data-message-author-role') || e.getAttribute('data-message-role');
             let id=e.getAttribute('data-message-id') || e.closest('[data-message-id]')?.getAttribute('data-message-id');
             if (!role && config.provider==='chatgpt') {
@@ -132,7 +150,7 @@ struct WebPageScript {
             copy.querySelectorAll('br,p,div,li,pre,blockquote').forEach(n=>n.append(document.createTextNode(' ')));
             if (!observation.ids.has(e)) observation.ids.set(e,`node-${++observation.nextID}`);
             const image=product ? alexaImage(e.querySelector('img')?.currentSrc||e.querySelector('img')?.src||'') : '';
-            return {id:id||(config.provider==='alexaShopping'?observation.documentID+':':'')+observation.ids.get(e),role:role||'unknown',text:product??normalized(copy.textContent||''),...(image?{images:[image]}:{})};
+            return {id:id||(shopping?observation.documentID+':':'')+observation.ids.get(e),role:role||'unknown',text:product??normalized(copy.textContent||''),...(image?{images:[image]}:{})};
         });
         // Alexa's suggestion buttons under its newest reply: worded buttons after the last thing you sent,
         // outside product cards. Each label must be unique so a choice names exactly one button.
@@ -166,16 +184,17 @@ struct WebPageScript {
         const status = () => {
             const input=editor(); let reason='';
             const amazonLogin=config.provider==='alexaShopping' && (!!document.querySelector('#ap_email,#ap_password,#ap_email_login') || all('a#nav-link-accountList,#nav-link-accountList a').some(e=>/signin/.test(e.getAttribute('data-nav-ref')||'')));
-            const login=amazonLogin || all('button[data-testid="login-button"]').length>0 || all('button,a').some(e=>/^(log in|sign in|sign up|sign up for free)$/i.test(normalized(e.innerText||e.getAttribute('aria-label')||'')) || (config.provider==='dots' && /^(log in|sign in)$/i.test(e.getAttribute('aria-label')||'')));
-            const account=document.querySelector(config.account);
+            const sparky=config.provider==='sparky';
+            const login=sparky ? all('[role="dialog"][data-testid="sparky-fab"] button').some(b=>b.innerText.trim()==='Sign in') : amazonLogin || all('button[data-testid="login-button"]').length>0 || all('button,a').some(e=>/^(log in|sign in|sign up|sign up for free)$/i.test(normalized(e.innerText||e.getAttribute('aria-label')||'')) || (config.provider==='dots' && /^(log in|sign in)$/i.test(e.getAttribute('aria-label')||'')));
+            const account=sparky ? input : document.querySelector(config.account);
             const signedIn=login ? false : account ? true : null;
             // Closed panels can stay rendered, marked aria-hidden or moved off-screen.
             const modal=all('[role="dialog"],[aria-modal="true"]').some(e=>{const r=e.getBoundingClientRect();
                 const offScreen=r.width>0 && r.height>0 && (r.right<=0 || r.bottom<=0 || r.left>=innerWidth || r.top>=innerHeight);
-                return e.getAttribute('aria-hidden')!=='true' && !offScreen;});
+                return e.getAttribute('aria-hidden')!=='true' && !offScreen && !(sparky && input && e.contains(input));});
             const rufusPending=config.provider==='alexaShopping'&&all('#rufus-loader-avatar:not(.rufus-visibility-hidden)').length>0&&(()=>{const m=messages();return m.length>0&&m[m.length-1].role==='user';})();const stops='button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"],button[aria-label="Stop"],.dial-msg.writing,[data-render-id="thinking"]';
             // Amazon's storefront has its own controls; only the Alexa panel can be replying.
-            const generating=all(config.provider==='alexaShopping'?stops.split(',').map(s=>'#nav-flyout-rufus '+s).join(','):stops).length>0||rufusPending;
+            const generating=all(config.provider==='alexaShopping'?stops.split(',').map(s=>'#nav-flyout-rufus '+s).join(','):stops).length>0||rufusPending||(sparky && sparkyConversation().at(-1)?.role==='user');
             if (!pathAllowed()) reason=`Open a ${config.name} chat to send from MsgBlast.`;
             else if (login) reason=`Sign in to ${config.name} to send this request.`;
             // Responsive sidebars hide their account control without ending the session.
@@ -203,6 +222,14 @@ struct WebPageScript {
     var inspect: String { provider == .muse ? MusePageScript.inspect : helpers + "\nreturn inspect();" }
     // Apply the initial pane layout once per document. A user's later choice wins.
     var configureInitialLayout: String {
+        if provider == .sparky {
+            return helpers + #"""
+            if (!pathAllowed() || observation.layoutConfigured) return;
+            if (editor()) {observation.layoutConfigured=true;return;}
+            const open=unique('button[aria-label="Open sparky, your AI shopping assistant" i]');
+            if (open && !open.disabled) {observation.layoutConfigured=true;open.click();}
+            """#
+        }
         if provider == .alexaShopping {
             return helpers + #"""
             if (!pathAllowed()) return;
@@ -428,7 +455,36 @@ struct WebPageScript {
         """#
     }
 
+    private var sparkyFixture: String {
+        #"""
+        <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+        <style>:root{color-scheme:light dark;font:16px -apple-system,sans-serif}body{padding:16px}
+        textarea{box-sizing:border-box;width:100%;font:inherit;padding:10px}button{font:inherit}.clip{position:absolute;clip-path:inset(100%)}</style></head>
+        <body><h2>Ask Sparky</h2><small>Local fixture · simulated Walmart conversation</small>
+        <div id="chat"><div data-testid="sparky-chat-window"><div data-testid="chat-panel">
+        <div data-testid="message-container"><div data-testid="autoscroll" id="turns"></div></div>
+        <textarea aria-label="Message Sparky" data-testid="unified-chat-text-area"></textarea>
+        <button aria-label="Send Message" disabled>Send</button></div></div></div>
+        <div id="login" hidden><div role="dialog" data-testid="sparky-fab"><button>Sign in</button></div></div>
+        <script>
+        const input=document.querySelector('textarea'),send=document.querySelector('[aria-label="Send Message"]');
+        input.oninput=()=>send.disabled=!input.value.trim();
+        function turn(label,text) {
+            const row=document.createElement('div'),body=document.createElement('div'),role=document.createElement('span');
+            row.dataset.testid=crypto.randomUUID();role.className='clip';role.textContent=label;
+            body.append(role,document.createTextNode(text));row.append(body);turns.append(row);return body;
+        }
+        send.onclick=()=>{
+            turn('Sent message,',input.value);input.value='';input.oninput();
+            setTimeout(()=>{const reply=turn('Received message,','The steel bottle keeps water cold. The plastic bottle is lighter. ');
+                const link=document.createElement('a');link.href='/ip/Fixture-bottle/123456';link.textContent='Sample bottle';reply.append(link);},200);
+        };
+        </script></body></html>
+        """#
+    }
+
     var fixture: String {
+        if provider == .sparky { return sparkyFixture }
         if provider == .muse { return MusePageScript.fixture }
         if provider == .alexaShopping { return alexaShoppingFixture }
         let input: String = switch provider {

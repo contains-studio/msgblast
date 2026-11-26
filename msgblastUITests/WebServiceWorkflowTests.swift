@@ -7,17 +7,7 @@ final class WebServiceWorkflowTests: XCTestCase {
         app.launchArguments = ["--demo", "--isolated-demo"]
         app.launch()
         defer { app.terminate() }
-        XCTAssertTrue(app.buttons["Edit agents"].waitForExistence(timeout: 10))
-        for name in ["Cedar", "Lumen", "Orbit", "Maple", "Echo", "Flint"] {
-            app.buttons[name].click()
-        }
-        app.buttons["Edit agents"].click()
-        app.scrollViews["Agent grid scroll area"].scroll(byDeltaX: 0, deltaY: -1000)
-        let add = app.buttons["Add Alexa Shopping Web"]
-        XCTAssertTrue(add.waitForExistence(timeout: 5))
-        add.click()
-        app.buttons["Done editing agents"].click()
-        app.buttons["Alexa Shopping Web"].click()
+        selectShoppingAgent("Alexa Shopping Web", in: app)
         capture(app, name: "Alexa Shopping added — local fixture")
         let editor = app.textViews["Shared prompt"]
         editor.click(); editor.typeKey("a", modifierFlags: .command); editor.typeText("Compare reusable water bottle materials")
@@ -29,6 +19,38 @@ final class WebServiceWorkflowTests: XCTestCase {
         XCTAssertTrue(app.buttons["New chat"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Chat history"].exists)
         capture(app, name: "Alexa New chat and Chat history — local fixture")
+    }
+
+    @MainActor
+    func testWalmartSparkyReceivesSharedQuestion() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--isolated-demo"]
+        app.launch()
+        defer { app.terminate() }
+        selectShoppingAgent("Walmart Sparky", in: app)
+        let editor = app.textViews["Shared prompt"]
+        editor.click()
+        editor.typeKey("a", modifierFlags: .command)
+        editor.typeText("Compare two reusable water bottles")
+        capture(app, name: "Sparky selected with shopping question — local fixture")
+        app.buttons["Send & compare"].click()
+        XCTAssertTrue(reply(app, containing: "The steel bottle keeps water cold").waitForExistence(timeout: 20))
+        capture(app, name: "Sparky shopping reply — local fixture")
+    }
+
+    @MainActor
+    private func selectShoppingAgent(_ name: String, in app: XCUIApplication) {
+        XCTAssertTrue(app.buttons["Edit agents"].waitForExistence(timeout: 10))
+        for name in ["Cedar", "Lumen", "Orbit", "Maple", "Echo", "Flint"] {
+            app.buttons[name].click()
+        }
+        app.buttons["Edit agents"].click()
+        app.scrollViews["Agent grid scroll area"].scroll(byDeltaX: 0, deltaY: -1000)
+        let add = app.buttons["Add \(name)"]
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        add.click()
+        app.buttons["Done editing agents"].click()
+        app.buttons[name].click()
     }
 
     @MainActor
