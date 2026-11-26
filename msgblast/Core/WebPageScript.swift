@@ -194,7 +194,11 @@ struct WebPageScript {
                 return e.getAttribute('aria-hidden')!=='true' && !offScreen && !(sparky && input && e.contains(input));});
             const rufusPending=config.provider==='alexaShopping'&&all('#rufus-loader-avatar:not(.rufus-visibility-hidden)').length>0&&(()=>{const m=messages();return m.length>0&&m[m.length-1].role==='user';})();const stops='button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"],button[aria-label="Stop"],.dial-msg.writing,[data-render-id="thinking"]';
             // Amazon's storefront has its own controls; only the Alexa panel can be replying.
-            const generating=all(config.provider==='alexaShopping'?stops.split(',').map(s=>'#nav-flyout-rufus '+s).join(','):stops).length>0||rufusPending||(sparky && sparkyConversation().at(-1)?.role==='user');
+            // Sparky shows no reliable loading control, so an unanswered sent turn only counts as pending for two minutes.
+            const sparkyPending=sparky && (()=>{const last=sparkyConversation().at(-1);if (last?.role!=='user') return false;
+                if (observation.sparkyPendingID!==last.id) {observation.sparkyPendingID=last.id;observation.sparkyPendingSince=Date.now();}
+                return Date.now()-observation.sparkyPendingSince<120000;})();
+            const generating=all(config.provider==='alexaShopping'?stops.split(',').map(s=>'#nav-flyout-rufus '+s).join(','):stops).length>0||rufusPending||sparkyPending;
             if (!pathAllowed()) reason=`Open a ${config.name} chat to send from MsgBlast.`;
             else if (login) reason=`Sign in to ${config.name} to send this request.`;
             // Responsive sidebars hide their account control without ending the session.

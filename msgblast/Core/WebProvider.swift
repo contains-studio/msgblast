@@ -50,7 +50,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
     public var sharesOneConversation: Bool { self == .os3 || isShoppingWebsite || self == .dotsApp || (desktopApp != nil && ![.museApp, .geminiApp, .chatgptApp, .dotsApp, .claudeApp].contains(self)) }
     var isShoppingWebsite: Bool { self == .alexaShopping || self == .sparky }
     public var newChatURL: URL { self == .muse ? URL(string: "https://muse.ai/thread/new")! : homeURL }
-    var browserCookieHost: String { self == .alexaShopping ? "amazon.com" : homeURL.host! }
+    var browserCookieHost: String { switch self { case .alexaShopping: "amazon.com"; case .sparky: "walmart.com"; default: homeURL.host! } }
     public func isSavedConversation(_ url: URL) -> Bool {
         if isShoppingWebsite { return isChatURL(url) }
         guard isChatURL(url), url.query == nil, url.fragment == nil else { return false }
