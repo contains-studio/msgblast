@@ -45,11 +45,11 @@ public struct WantMCPClient: WantService {
     public static let protocolVersion = "2026-07-28"
     public static let eventsExtension = "io.modelcontextprotocol/events"
     public let endpoint: URL
-    private let token: @Sendable () async -> String?
+    private let token: @Sendable () async throws -> String?
     private let session: URLSession
     private let version: String
 
-    public init(endpoint: URL, session: URLSession = .shared, version: String = "dev", token: @escaping @Sendable () async -> String?) {
+    public init(endpoint: URL, session: URLSession = .shared, version: String = "dev", token: @escaping @Sendable () async throws -> String?) {
         self.endpoint = endpoint; self.session = session; self.version = version; self.token = token
     }
 
@@ -144,7 +144,7 @@ public struct WantMCPClient: WantService {
         request.setValue(Self.protocolVersion, forHTTPHeaderField: "MCP-Protocol-Version")
         request.setValue(method, forHTTPHeaderField: "Mcp-Method")
         if method == "tools/call" || method.hasPrefix("events/"), let name = params["name"] as? String { request.setValue(name, forHTTPHeaderField: "Mcp-Name") }
-        if let token = await token() { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        if let token = try await token() { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw WantError.invalidResponse }
         if http.statusCode == 403 { throw WantError.server("The Want MCP did not allow that request.") }

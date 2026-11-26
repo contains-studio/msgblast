@@ -201,6 +201,33 @@ final class WantsTests: XCTestCase {
         XCTAssertNil(WantCredential.writeKey("sk_" + String(repeating: "a", count: 32)))
     }
 
+    @MainActor func testCancelDuringDiscoveryLeavesCallbackStopped() async throws {
+        let callback = WantOAuthCallback()
+        _ = try await callback.start()
+        callback.stop()
+        let finished = expectation(description: "A cancelled sign-in cannot start waiting for a redirect")
+        let wait = Task {
+            do { _ = try await callback.wait(); XCTFail("Cancelled sign-in returned a callback") }
+            catch { XCTAssertTrue(error is CancellationError) }
+            finished.fulfill()
+        }
+        await fulfillment(of: [finished], timeout: 1)
+        callback.stop()
+        await wait.value
+    }
+
+    func testChangedAccountDoesNotSendPendingMutation() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [WantStub.self]
+        WantStub.handler = { _ in
+            XCTFail("A request with a cancelled credential must not reach the server")
+            return (500, [:], Data())
+        }
+        let client = WantMCPClient(endpoint: endpoint, session: URLSession(configuration: config)) { throw CancellationError() }
+        do { try await client.answer(questionID: "old-question", text: "private"); XCTFail("Mutation should have stopped") }
+        catch { XCTAssertTrue(error is CancellationError) }
+    }
+
     func testOAuthDiscoveryAuthorizeURLAndStateCheck() async throws {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [WantStub.self]

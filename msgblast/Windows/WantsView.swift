@@ -141,7 +141,7 @@ private struct WantItemDetail: View {
     let item: WantItem
     let list: WantList
     @State private var picking = false
-    @State private var answer = ""
+    @State private var answers: [String: String] = [:]
     private var entries: [WantEntry] { wants.entries[item.id] ?? item.entries ?? [] }
 
     var body: some View {
@@ -208,16 +208,15 @@ private struct WantItemDetail: View {
                 }
             }
             HStack {
-                TextField("Answer", text: $answer).textFieldStyle(.roundedBorder).onSubmit(send)
-                Button("Answer", action: send).disabled(answer.trimmingCharacters(in: .whitespaces).isEmpty)
+                TextField("Answer", text: Binding(get: { answers[question.id] ?? "" }, set: { answers[question.id] = $0 }))
+                    .textFieldStyle(.roundedBorder).onSubmit { send(question) }
+                Button("Answer") { send(question) }.disabled((answers[question.id] ?? "").trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }.padding(14).background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
     }
 
-    private func send() {
-        guard let question = item.openQuestion else { return }
-        let text = answer
-        answer = ""
+    private func send(_ question: WantQuestion) {
+        guard let text = answers.removeValue(forKey: question.id) else { return }
         Task { await wants.answer(question, with: text) }
     }
 

@@ -5,6 +5,7 @@ import Network
 /// What msgblast keeps in the Keychain for The Want MCP: an OAuth grant for the lists the
 /// person ticked, or a pasted write key for one list.
 public struct WantCredential: Codable, Equatable, Sendable {
+    public var grantID: UUID?
     public var accessToken: String
     public var refreshToken: String?
     public var expiresAt: Date?
@@ -127,6 +128,7 @@ public enum WantOAuth {
         let (data, response) = try await session.data(for: request)
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw WantError.invalidResponse }
         guard (response as? HTTPURLResponse)?.statusCode == 200, let access = json["access_token"] as? String else {
+            if json["error"] as? String == "invalid_grant", form["grant_type"] == "refresh_token" { throw WantError.unauthorized(resourceMetadata: nil) }
             throw WantError.server(json["error_description"] as? String ?? "The Want MCP did not accept the sign-in.")
         }
         return WantCredential(accessToken: access, refreshToken: json["refresh_token"] as? String,
@@ -165,10 +167,12 @@ public enum WantOAuth {
     private var listener: NWListener?
     private var startup: CheckedContinuation<URL, Error>?
     private var waiter: CheckedContinuation<URL, Error>?
+    private var stopped = false
     public private(set) var redirect: URL?
     public init() {}
 
     public func start() async throws -> URL {
+        guard !stopped else { throw CancellationError() }
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
         let listener = try NWListener(using: parameters)
@@ -193,10 +197,12 @@ public enum WantOAuth {
     }
 
     public func wait() async throws -> URL {
-        try await withCheckedThrowingContinuation { waiter = $0 }
+        guard !stopped else { throw CancellationError() }
+        return try await withCheckedThrowingContinuation { waiter = $0 }
     }
 
     public func stop() {
+        stopped = true
         listener?.cancel(); listener = nil
         startup?.resume(throwing: CancellationError()); startup = nil
         waiter?.resume(throwing: CancellationError()); waiter = nil

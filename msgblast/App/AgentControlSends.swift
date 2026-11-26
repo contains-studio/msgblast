@@ -36,11 +36,12 @@ import msgblastRemoteProtocol
     /// Shows the send in the banner and the activity list, and refuses new sends while the person has stopped them.
     /// A new send waits for earlier agent sends, then refreshes permissions and app installs, as the phone's
     /// probe loop does while it is connected, so readiness is current. A repeat returns its stored result.
-    func send(_ command: RemoteCommand, client: String) async -> RemoteCommandResult {
+    func send(_ command: RemoteCommand, client: String, isAuthorized: @MainActor () -> Bool = { true }) async -> RemoteCommandResult {
         let id = command.clientCommandID
         return await activity.run(command, client: client, isKnown: { self.executor.status(of: id).code != .unknownCommand },
                                   prepare: { await self.model.remoteAvailabilityProbe(slow: false) }) { command in
-            await self.executor.execute(command)
+            guard isAuthorized() else { return .rejected(id, .invalidCommand, "The account or send selection changed.") }
+            return await self.executor.execute(command)
         }
     }
 }
