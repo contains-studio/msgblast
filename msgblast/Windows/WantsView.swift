@@ -113,7 +113,7 @@ private struct WantsListColumn: View {
                     Section {
                         ForEach(list.items ?? []) { item in
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(item.text).fontWeight(.medium).lineLimit(2)
+                                Text(item.text).fontWeight(.medium).lineLimit(3)
                                 if item.status == "waiting_on_owner" {
                                     Label(WantFormat.waiting, systemImage: "questionmark.bubble")
                                         .font(.caption.weight(.medium))
@@ -175,7 +175,11 @@ private struct WantItemDetail: View {
             VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 8) {
-                        Link(list.title, destination: URL(string: list.url(for: item))!)
+                        if let url = URL(string: list.url(for: item)), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
+                            Link(list.title, destination: url)
+                        } else {
+                            Text(list.title)
+                        }
                         if list.isPrivate { Label("Private", systemImage: "lock") }
                     }.font(.callout).foregroundStyle(.secondary)
                     Text(item.text).font(.title.bold()).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
@@ -331,7 +335,7 @@ private struct WantsAgentPicker: View {
 
     init(title: String, action: String, agents: [AgentControlAgent], initial: [String], done: @escaping ([String]) -> Void) {
         self.title = title; self.action = action; self.agents = agents; self.done = done
-        _chosen = State(initialValue: Set(initial).intersection(agents.map(\.id)))
+        _chosen = State(initialValue: Set(initial).intersection(agents.filter { !$0.busy }.map(\.id)))
     }
 
     var body: some View {
@@ -341,10 +345,15 @@ private struct WantsAgentPicker: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(agents, id: \.id) { agent in
-                Toggle(agent.name, isOn: Binding(get: { chosen.contains(agent.id) }, set: { on in
-                    if on { chosen.insert(agent.id) } else { chosen.remove(agent.id) }
-                })).disabled(agent.busy)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                        Toggle(isOn: Binding(get: { chosen.contains(agent.id) }, set: { on in
+                            if on { chosen.insert(agent.id) } else { chosen.remove(agent.id) }
+                        })) {
+                            HStack {
+                                Text(agent.name)
+                                if agent.busy { Text("Busy").foregroundStyle(.secondary) }
+                                Spacer()
+                            }.contentShape(Rectangle())
+                        }.disabled(agent.busy)
                     }
                 }
             }.frame(height: min(280, CGFloat(agents.count) * 26))
