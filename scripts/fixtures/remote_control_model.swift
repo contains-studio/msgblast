@@ -79,6 +79,7 @@ extension SideChatModelCheck {
         _ = await wants.take(WantEventPage(events: [comment], cursor: "102"))
         precondition(model.agentSendActivity.log.entries.count == after, "A repeated cursor cannot send again")
         try await checkRevokedForward(model, event: comment)
+        await checkRefusedForward(model, event: comment, recipient: recipient)
         wants.signOut()
         let restored = WantsModel(app: model)
         precondition(!restored.saved.forwardActivity && restored.saved.forwardAgents.isEmpty && restored.saved.forwardedConversations.isEmpty)
@@ -104,6 +105,21 @@ extension SideChatModelCheck {
         _ = await blocker.value
         _ = await queued.value
         precondition(model.state.comparisons.count == count && activity.log.entries.first?.result?.hasPrefix("Refused") == true)
+    }
+
+    @MainActor static func checkRefusedForward(_ model: AppModel, event: WantEvent, recipient: String) async {
+        let wants = model.wants
+        let list = wants.lists.first { $0.id == event.listId }!
+        let item = list.items!.first { $0.id == event.item!.id }!
+        await wants.blast(item, in: list, to: [recipient])
+        precondition(wants.saved.blasts[item.id]?.comparisonID != nil)
+        let before = model.agentSendActivity.log.entries.count
+        model.remote.power.simulate(locked: true)
+        defer { model.remote.power.simulate(locked: false) }
+        _ = await wants.take(.init(events: [event], cursor: "104"))
+        let entries = model.agentSendActivity.log.entries
+        precondition(entries.count == before + 1 && entries.first?.action == "Followed up")
+        precondition(entries.first?.result?.hasPrefix("Refused") == true, "A lock refusal must not start another conversation")
     }
 
     /// A Messages-only new conversation and its replay. Returns the new conversation's id.
