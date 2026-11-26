@@ -68,6 +68,22 @@ final class WebServiceTests: XCTestCase {
         XCTAssertEqual(quantities as? Int, 1)
     }
 
+    func testSparkyFreshChatCannotClaimAnOlderComparisonByRepeatingItsQuestion() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .sparky, storageURL: directory.appendingPathComponent("state.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let comparison = UUID()
+        _ = await session.send("Compare bottles", comparisonID: comparison)
+        try await waitFor { session.messagesForComparison(comparison).count == 2 }
+        let original = session.messagesForComparison(comparison)
+        _ = try await session.webView.evaluateJavaScript("turns.replaceChildren(); turn('Sent message,', 'Compare bottles'); turn('Received message,', 'Different private answer'); true")
+        await session.refresh()
+        XCTAssertEqual(session.messagesForComparison(comparison), original)
+    }
+
     func testSparkyImportsWalmartCookiesAndRecoversAfterAnUnansweredTurn() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
