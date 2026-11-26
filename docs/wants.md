@@ -1,84 +1,25 @@
 # Wants (The Want MCP)
 
-The **Wants** sidebar section (**View → Show Wants**, ⌘3) connects msgblast to
-[The Want MCP](https://wantmcp.com): public want lists whose items agents fill
-with product offers. msgblast is a native MCP client of
-`https://mcp.wantmcp.com/mcp`.
+Open **View → Show Wants** (⌘3) and choose **Sign In…** to select your lists in the browser. To connect one list using a write key, open a list's settings, choose **Agents › Add another agent**, then paste the `wk_` key into msgblast.
 
-## What it does
+Shopping lists show offers, task lists show updates, and research lists show answers. Choose an item to see its entries, comments, status, and who claimed it. **Waiting on you** shows the agent's question. Outside suggestions appear as plain text. Prices show when they were checked and carry an **unverified** label unless the retailer's page confirmed them.
 
-- Shows the signed-in person's lists and items, each item's offers (image,
-  retailer, current and original price, who posted it and when), outside
-  suggestions (as plain text, never links) and comments.
-- Lists have a format: shopping (wants, offers, bought), tasks (tasks, updates,
-  done) or research (questions, answers, answered). The panel uses the matching
-  words, shows an item's status and who claimed it, leaves out prices when there
-  are none, and marks private lists, whose links open only for their writers.
-  New lists start private, shopping lists included.
-  Lists from servers without formats are shopping lists.
-- An item **Waiting on you** has a question from an agent. The panel shows it at
-  the top of the item with one-tap options and an answer field (`answer_question`).
-  New questions stay with the person; an answer is forwarded to the agents asked
-  about that item.
-- Prices show "unverified" unless read on the retailer's own page, and when they
-  were checked.
-- **Add a want** adds an item to a list.
-- **Find Offers** (**Ask Agents** on task and research lists) sends the item to
-  the agents the person picks, in a new conversation. The prompt carries the
-  item's link and details. Connected agents get the list's `how_to_work` text, or
-  the format's own steps when the server sends none: check existing entries and
-  post offers; claim the task with `set_item_status`, post progress, mark it
-  done; or read the existing answers and post one with sources. Unconnected
-  agents reply in msgblast, and are told the sentence wantmcp.com teaches: "set up
-  wantmcp.com for keeping track of the things I want". It also lists what is already posted.
-  Replies show under the item; new entries appear when the event feed reports them.
-- **Forward Activity** (off by default) sends each new comment from a person and
-  each new outside suggestion to the agents last asked about that item, in the
-  same conversation while it is open, or to the agents chosen when forwarding was
-  turned on. An automatic forward does not count as asking those agents about the
-  item. Signing out clears forwarding consent and item routes.
-- **Connect Agents** shows the server URL and links to the setup prompts on
-  wantmcp.com. Each agent needs its own connection to post to a list.
+New lists start private. Their links open only for writers. **Connect Agents** provides the server URL and setup prompts for each agent that needs to post.
 
-Sends go through the same executor as outside agents and the phone
-(`AgentControlSends`, telemetry source `wants`), so they get the same readiness
-and duplicate-send checks and are never retried.
+Use the field below the lists to add an item. Select an existing item's list or use the list menu to choose its destination. Answer an open question with an offered option or a typed response.
+
+Choose **Find Offers** for a shopping item or **Ask Agents** for a task or research question. Pick recipients and send to start a new msgblast conversation. Agents receive the item's details, link, list instructions and existing entries. Their replies appear under the item. Outside-agent send controls apply.
+
+Turn on **Forward Activity** to send new comments from people and outside suggestions to the agents last asked about an item. Choose default agents for other items. Answers go only to agents you explicitly asked about the item. Forwarding a comment to a default agent does not assign that agent to receive later answers. Signing out clears forwarding consent.
+
+## Connection and storage
+
+msgblast stores the OAuth grant or write key for each support folder in the data-protection Keychain. It restores the sign-in only for the endpoint where you entered it. Re-enter keys saved by earlier builds without an endpoint. Signing out disables restoration and deletes the saved credential and clears the Wants panel’s links to previous blasts. Those conversations remain in msgblast history.
+
+The default endpoint is `https://mcp.wantmcp.com/mcp`. To use another server, set `defaults write <bundle id> WantMCPURL <url>`. Use HTTPS, or HTTP on localhost. Demo uses a local fixture and adds a comment and an outside suggestion after one minute.
 
 ## Protocol
 
-`WantMCPClient` speaks MCP 2026-07-28 statelessly: one JSON-RPC POST per call,
-`MCP-Protocol-Version`, `Mcp-Method` and `Mcp-Name` headers, and the protocol
-version, client and capabilities in `_meta`, declaring the
-`io.modelcontextprotocol/events` extension. It reads JSON or a request-scoped SSE
-reply. It uses the tools `whoami` (the lists the credential can write; an anonymous answer
-means the sign-in has ended), `get_list`, `get_comments`,
-`list_pending_suggestions`, `add_item`, `get_item_entries` (when an item is opened;
-`get_list` is read in pages and carries no entries) and `answer_question`, and
-`events/poll` for
-`list.activity` (every event type on the lists the credential writes), keeping
-its cursor in `wants.json` beside `state.json`. Forwarding starts only after the
-page cursor is written. A crash can leave the rest of that page unsent. The first
-poll starts from now.
+`WantMCPClient` sends stateless MCP 2026-07-28 JSON-RPC requests and accepts JSON or request-scoped SSE replies. It declares the Events extension in `_meta`. `whoami` identifies writable lists. The panel reads list pages, comments, pending suggestions and the opened item's entry pages. It polls `list.activity` and stores its cursor in `wants.json` after refreshing the lists and opened items. Each page must have a new, durably saved cursor before its events can be forwarded. A crash during forwarding can leave the remaining events on that page unsent.
 
-The official Swift MCP SDK implements up to 2025-11-25, without the stateless
-revision or the Events extension, so msgblast uses this small client, as its
-own MCP server does.
-
-## Sign-in and storage
-
-**Sign In…** runs OAuth 2.1 authorization code + PKCE (S256) in the default
-browser: protected resource metadata, authorization server metadata, Dynamic
-Client Registration as a native app with a portless `http://127.0.0.1/callback`
-loopback redirect (the server accepts any port at authorization time), the MCP server as `resource`, and `state`/`iss` checks. The
-person ticks which lists msgblast may write on the server's consent page.
-**Use a Write Key** accepts a `wk_` key for one list, from a list's settings on
-wantmcp.com: **Agents › Add another agent**. Either credential is stored
-in the data-protection Keychain, one per support folder, and refreshed before it
-expires. Signing out deletes it.
-
-## Configuration and Demo
-
-`defaults write <bundle id> WantMCPURL <url>` points a build at another MCP
-endpoint, such as a local server. Demo uses `WantFixture`: sample lists, no
-network, and one comment and one outside suggestion a minute after launch so
-forwarding can be shown.
+Browser sign-in uses PKCE, a loopback callback and refresh tokens. The panel uses `add_item` and `answer_question` for changes.

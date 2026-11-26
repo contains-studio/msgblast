@@ -40,7 +40,7 @@ import msgblastRemoteProtocol
         let id = command.clientCommandID
         return await activity.run(command, client: client, isKnown: { self.executor.status(of: id).code != .unknownCommand },
                                   prepare: { await self.model.remoteAvailabilityProbe(slow: false) }) { command in
-            guard isAuthorized() else { return .rejected(command.clientCommandID, .invalidCommand, "This send is no longer authorized.") }
+            guard isAuthorized() else { return .rejected(id, .invalidCommand, "The account or send selection changed.") }
             return await self.executor.execute(command)
         }
     }

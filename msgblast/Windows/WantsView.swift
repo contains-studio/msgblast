@@ -88,7 +88,7 @@ private struct WantsSignInView: View {
                     HStack {
                         SecureField("wk_…", text: $key).textFieldStyle(.roundedBorder).frame(width: 260)
                         Button("Add") {
-                            if wants.useWriteKey(key) { key = "" } else { wants.error = "That isn't a write key. Keys start with wk_." }
+                            if wants.useWriteKey(key) { key = "" }
                         }.disabled(key.isEmpty)
                     }
                     Text("On wantmcp.com, open a list's settings, then Agents › Add another agent.").font(.callout).foregroundStyle(.secondary)
@@ -167,7 +167,7 @@ private struct WantItemDetail: View {
     let item: WantItem
     let list: WantList
     @State private var picking = false
-    @State private var answer = ""
+    @State private var answers: [String: String] = [:]
     private var entries: [WantEntry] { wants.entries[item.id] ?? item.entries ?? [] }
 
     var body: some View {
@@ -236,16 +236,15 @@ private struct WantItemDetail: View {
                 }
             }
             HStack {
-                TextField("Or type an answer", text: $answer).textFieldStyle(.roundedBorder).onSubmit(send)
-                Button("Answer", action: send).disabled(answer.trimmingCharacters(in: .whitespaces).isEmpty)
+                TextField("Or type an answer", text: Binding(get: { answers[question.id] ?? "" }, set: { answers[question.id] = $0 }))
+                    .textFieldStyle(.roundedBorder).onSubmit { send(question) }
+                Button("Answer") { send(question) }.disabled((answers[question.id] ?? "").trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }.padding(14).background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
     }
 
-    private func send() {
-        guard let question = item.openQuestion else { return }
-        let text = answer
-        answer = ""
+    private func send(_ question: WantQuestion) {
+        guard let text = answers.removeValue(forKey: question.id) else { return }
         Task { await wants.answer(question, with: text) }
     }
 
@@ -301,7 +300,7 @@ private struct WantEntryRow: View {
                         if let was = price.formattedOriginal { Text(was).strikethrough().foregroundStyle(.secondary) }
                     }
                     HStack(spacing: 6) {
-                        if price.verified == false { Text("unverified").font(.caption).foregroundStyle(.orange) }
+                        if !price.isVerified { Text("unverified").font(.caption).foregroundStyle(.orange) }
                         if let checked = price.checkedAt { Text("checked \(checked.formatted(.relative(presentation: .named)))").font(.caption).foregroundStyle(.secondary) }
                     }
                 }
