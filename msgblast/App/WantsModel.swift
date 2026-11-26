@@ -77,6 +77,7 @@ import msgblastRemoteProtocol
             service = WantFixture(activityDelay: 60)
         } else {
             credential = keychain.read()
+            signedIn = credential != nil
             if var existing = credential, existing.grantID == nil {
                 existing.grantID = UUID()
                 if keychain.save(existing) { credential = existing }
@@ -85,7 +86,6 @@ import msgblastRemoteProtocol
                 saved = Saved()
                 saved.grantID = credential?.grantID
             }
-            signedIn = credential != nil
             service = liveService()
         }
     }
