@@ -315,6 +315,17 @@ public struct WebPageMessage: Codable, Equatable, Identifiable, Sendable {
     public init(id: String = UUID().uuidString, role: String, text: String, images: [String]? = nil) {
         self.id = id; self.role = role; self.text = text; self.images = images
     }
+    func replacesReloaded(_ prior: Self) -> Bool {
+        guard role == prior.role else { return false }
+        if text == prior.text { return true }
+        guard formattedProducts == true, prior.formattedProducts != true, prior.text.hasPrefix("Product Comparison Table") else { return false }
+        func links(_ text: String) -> [Substring] {
+            text.split(separator: "\n").filter { $0.hasPrefix("https://www.walmart.com/ip/") }
+        }
+        let products = links(text)
+        return !products.isEmpty && products == links(prior.text)
+    }
+
 }
 
 /// Choices offered on a shopping reply, with an optional revision for changing product cards.

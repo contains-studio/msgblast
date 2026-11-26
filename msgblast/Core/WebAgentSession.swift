@@ -115,7 +115,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                     anchored = true
                     continue
                 }
-                if next < merged.count, !onPage.contains(merged[next].id), merged[next].role == fresh.role, merged[next].text == fresh.text {
+                if next < merged.count, !onPage.contains(merged[next].id), fresh.replacesReloaded(merged[next]) {
                     merged[next] = fresh
                 } else if anchored {
                     merged.insert(fresh, at: next)

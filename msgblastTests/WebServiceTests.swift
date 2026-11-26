@@ -52,6 +52,10 @@ final class WebServiceTests: XCTestCase {
         let legacy = WebPageMessage(id: productReply.id, role: "assistant", text: String(repeating: "Old flattened product card ", count: 40))
         let upgraded = WebAgentSession.keepingSharedTurns([comparison.uuidString: [legacy]], live: [comparison: [productReply]], onPage: [productReply.id])
         XCTAssertEqual(upgraded[comparison.uuidString], [productReply])
+        let urls = text.split(separator: "\n").filter { $0.hasPrefix("https://") }
+        let renumbered = WebPageMessage(role: "assistant", text: (["Product Comparison Table"] + urls.map(String.init)).joined(separator: "\n"))
+        let reopened = WebAgentSession.keepingSharedTurns([comparison.uuidString: [renumbered]], live: [comparison: [productReply]], onPage: [productReply.id])
+        XCTAssertEqual(reopened[comparison.uuidString], [productReply])
         XCTAssertTrue(text.contains("Steel bottle\nPrice: $14.96\nSize: 26 oz\nhttps://www.walmart.com/ip/Fixture-bottle/123456\n\nPlastic bottle\nPrice: $13.88"))
         XCTAssertEqual(offer.labels, ["Add to cart - Steel bottle", "Add to cart - Plastic bottle"])
         let added = await session.send(offer.labels[0], comparisonID: comparison, action: offer.offerID)
