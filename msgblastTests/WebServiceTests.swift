@@ -59,7 +59,20 @@ final class WebServiceTests: XCTestCase {
         XCTAssertEqual(reopened[comparison.uuidString], [productReply])
         XCTAssertTrue(text.contains("Steel bottle\nPrice: $14.96\nSize: 26 oz\nhttps://www.walmart.com/ip/Fixture-bottle/123456\n\nPlastic bottle\nPrice: $13.88"))
         XCTAssertEqual(offer.labels, ["Add to cart - Steel bottle", "Add to cart - Plastic bottle"])
-        let added = await session.send(offer.labels[0], comparisonID: comparison, action: offer.offerID)
+        _ = try await session.webView.evaluateJavaScript("""
+            const first=document.querySelector('[role="group"][data-item-id]');
+            const duplicate=first.cloneNode(true);
+            duplicate.querySelector('button').setAttribute('aria-label','Decrease quantity for Steel bottle');
+            first.after(duplicate); true
+            """)
+        await session.refresh()
+        XCTAssertEqual(session.actionsForComparison(comparison)?.labels, ["Add to cart - Plastic bottle"])
+        let refused = await session.send(offer.labels[0], comparisonID: comparison, action: offer.offerID)
+        XCTAssertEqual(refused?.status, .notSent)
+        _ = try await session.webView.evaluateJavaScript("document.querySelectorAll('[role=group][data-item-id]')[1].remove(); true")
+        await session.refresh()
+        let restored = try XCTUnwrap(session.actionsForComparison(comparison))
+        let added = await session.send(restored.labels[0], comparisonID: comparison, action: restored.offerID)
         XCTAssertEqual(added?.status, .observed)
         try await waitFor { session.actionsForComparison(comparison)?.labels == ["Add to cart - Plastic bottle"] }
         let stale = await session.send(offer.labels[1], comparisonID: comparison, action: offer.offerID)
