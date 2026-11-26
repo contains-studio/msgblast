@@ -101,6 +101,7 @@ public enum WantFormat: String, Sendable {
     public var item: String { switch self { case .shopping: "Want"; case .tasks: "Task"; case .research: "Question" } }
     public var entries: String { switch self { case .shopping: "Offers"; case .tasks: "Updates"; case .research: "Answers" } }
     public var finished: String { switch self { case .shopping: "Bought"; case .tasks: "Done"; case .research: "Answered" } }
+    public var ask: String { self == .shopping ? "Find Offers" : "Ask Agents" }
     public static let waiting = "Waiting on you"
 }
 
@@ -134,5 +135,63 @@ public enum WantJSON {
             return date
         }
         return decoder
+    }
+}
+
+/// What msgblast sends to the user's agents about a want.
+public enum WantPrompt {
+    public static let connectURL = "https://wantmcp.com/connect"
+
+    /// Asks agents to work one item: find offers, do a task, or answer a question. Connected agents
+    /// follow the list's `how_to_work` (or the format's fallback); the rest reply in msgblast.
+    public static func ask(item: WantItem, list: WantList, posted entries: [WantEntry]) -> String {
+        let format = list.kind
+        let posted = entries.map { entry in
+            ([entry.title] + (entry.retailer.isEmpty ? [] : [entry.retailer]) + (entry.currentPrice.map { [$0.formatted] } ?? [])).joined(separator: ", ")
+        }
+        let connected = (list.howToWork ?? format.steps) + format.rule
+        let details = (item.details ?? item.detailsPreview).flatMap { $0.isEmpty ? nil : ["Details: \($0)"] } ?? []
+        return ([format.intro, "", "\(format.item): \(item.text)"] + details + [
+            "List: \(list.title)",
+            "Link: \(list.url(for: item))\(list.isPrivate ? " (private: only I and my connected agents can open it)" : "")",
+            "",
+            "If you are connected to The Want MCP: \(connected)",
+            "If you are not connected, reply here with \(format.reply). To connect, set up wantmcp.com for keeping track of the things I want.",
+        ] + (posted.isEmpty ? [] : ["", "Already posted:"] + posted.map { "- \($0)" })).joined(separator: "\n")
+    }
+}
+
+/// The prompt's words for each format, kept apart from `WantPrompt.ask` so it stays simple.
+extension WantFormat {
+    var intro: String {
+        switch self {
+        case .shopping: "Find the best current offers for this item on my want list."
+        case .tasks: "Work on this task from my task list."
+        case .research: "Answer this question from my research list."
+        }
+    }
+    /// What connected agents do when the list sends no `how_to_work`.
+    var steps: String {
+        switch self {
+        case .shopping: "Call get_item_entries for this item first and skip products already there. Post each new offer with add_entry "
+            + "(product link, image link, retailer and price). For a product already there whose price changed, use post_price instead of adding it again."
+        case .tasks: "Claim it with set_item_status in_progress, post progress and results with add_entry, then set_item_status done with a note."
+        case .research: "Read the existing answers with get_item_entries first, then post your answer with add_entry and its sources in links."
+        }
+    }
+    /// Added whatever the list says: where prices came from, and never fighting over a claimed task.
+    var rule: String {
+        switch self {
+        case .shopping: " For each price, say where you saw it (price_source) and when."
+        case .tasks: " If another agent already holds this task, don't take it over or retry: tell me who holds it."
+        case .research: ""
+        }
+    }
+    var reply: String {
+        switch self {
+        case .shopping: "each offer: product name, retailer, price, product link and image link"
+        case .tasks: "your progress and results"
+        case .research: "your answer and its sources"
+        }
     }
 }

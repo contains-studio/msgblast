@@ -20,8 +20,10 @@ public protocol WantService: Sendable {
     /// The list and its items, every page. Items carry entries only from servers that still send them.
     func list(_ id: String) async throws -> WantList
     func entries(itemID: String) async throws -> [WantEntry]
+    func answer(questionID: String, text: String) async throws
     func comments(listID: String) async throws -> [WantComment]
     func suggestions(listID: String) async throws -> [WantEntry]
+    func addItem(listID: String, text: String) async throws -> WantItem
     /// New events of one type since `cursor` (nil starts from now). `list.activity` is every type.
     func poll(_ type: String, cursor: String?) async throws -> WantEventPage
 }
@@ -82,12 +84,19 @@ public struct WantMCPClient: WantService {
         } while cursor != nil
         return entries
     }
+    public func answer(questionID: String, text: String) async throws {
+        _ = try await tool("answer_question", ["question_id": questionID, "answer": text])
+    }
     public func comments(listID: String) async throws -> [WantComment] {
         try decode([WantComment].self, try await tool("get_comments", ["list": listID]), key: "comments")
     }
     public func suggestions(listID: String) async throws -> [WantEntry] {
         struct Row: Decodable { var entry: WantEntry }
         return try decode([Row].self, try await tool("list_pending_suggestions", ["list": listID]), key: "suggestions").map(\.entry)
+    }
+    public func addItem(listID: String, text: String) async throws -> WantItem {
+        let content = try await tool("add_item", ["list": listID, "text": text])
+        return try decode(WantItem.self, (content as? [String: Any])?["item"] ?? content)
     }
 
     public func poll(_ type: String, cursor: String?) async throws -> WantEventPage {
@@ -144,11 +153,13 @@ public struct WantMCPClient: WantService {
         request.setValue(Self.protocolVersion, forHTTPHeaderField: "MCP-Protocol-Version")
         request.setValue(method, forHTTPHeaderField: "Mcp-Method")
         if method == "tools/call" || method.hasPrefix("events/"), let name = params["name"] as? String { request.setValue(name, forHTTPHeaderField: "Mcp-Name") }
-        if let token = try await token() { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        let bearer = try await token()
+        if let bearer { request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization") }
         let (data, response) = try await session.data(for: request, delegate: WantRedirectPolicy())
         guard let http = response as? HTTPURLResponse else { throw WantError.invalidResponse }
         if http.statusCode == 403 { throw WantError.server("The Want MCP did not allow that request.") }
         if http.statusCode == 401 {
+            guard try await token() == bearer else { throw WantError.server("The request used an expired sign-in. Refresh Wants to see its current state.") }
             throw WantError.unauthorized(resourceMetadata: WantOAuth.resourceMetadata(http.value(forHTTPHeaderField: "WWW-Authenticate")))
         }
         let message = try Self.message(data, contentType: http.value(forHTTPHeaderField: "Content-Type"), id: id)
@@ -174,6 +185,6 @@ public struct WantMCPClient: WantService {
 }
 
 
-private final class WantRedirectPolicy: NSObject, URLSessionTaskDelegate {
+final class WantRedirectPolicy: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest) async -> URLRequest? { nil }
 }

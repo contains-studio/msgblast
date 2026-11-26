@@ -7,6 +7,7 @@ public actor WantFixture: WantService {
     private var comments: [WantComment]
     private var pending: [WantEvent] = []
     private var suggested: [WantEntry] = []
+    private var seq = 100
     private let activityAt: Date
 
     public init(now: Date = Date(), activityDelay: TimeInterval = 0) {
@@ -57,8 +58,24 @@ public actor WantFixture: WantService {
         return list
     }
     public func entries(itemID: String) -> [WantEntry] { lists.flatMap { $0.items ?? [] }.first { $0.id == itemID }?.entries ?? [] }
+    public func answer(questionID: String, text: String) {
+        for l in lists.indices {
+            for i in (lists[l].items ?? []).indices where lists[l].items?[i].openQuestion?.id == questionID {
+                lists[l].items?[i].openQuestion = nil
+                lists[l].items?[i].status = "open"
+            }
+        }
+    }
     public func comments(listID: String) -> [WantComment] { comments.filter { comment in comment.listId == listID && pending.allSatisfy { $0.comment?.id != comment.id } } }
     public func suggestions(listID: String) -> [WantEntry] { suggested.filter { $0.listId == listID } }
+    public func addItem(listID: String, text: String) throws -> WantItem {
+        guard let index = lists.firstIndex(where: { $0.id == listID }) else { throw WantError.server("List not found") }
+        seq += 1
+        let item = WantItem(id: "itm_\(seq)", text: text, entryCounts: .init(listed: 0, suggested: 0), commentCount: 0, entries: [])
+        lists[index].items = (lists[index].items ?? []) + [item]
+        lists[index].itemCount += 1
+        return item
+    }
     public func poll(_ type: String, cursor: String?) -> WantEventPage {
         guard let cursor, Date() >= activityAt else { return WantEventPage(events: [], cursor: cursor ?? "0", nextPoll: 5) }
         let after = Int(cursor) ?? 0

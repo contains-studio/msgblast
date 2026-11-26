@@ -55,7 +55,7 @@ export function validEvent(event, allowFixtures = false) {
   if (has(p, 'recipientCount') && !integer(p.recipientCount, 1, 100)) return false;
   if (has(p, 'operation') && !['send', 'setup', 'storage'].includes(p.operation)) return false;
   if (has(p, 'result') && !['success', 'failure', ...(event.name === 'agent_send_result' ? ['uncertain'] : [])].includes(p.result)) return false;
-  if (has(p, 'source') && !['mac', 'phone', 'outsideAgent'].includes(p.source)) return false;
+  if (has(p, 'source') && !['mac', 'phone', 'outsideAgent', 'wants'].includes(p.source)) return false;
   if (has(p, 'duration') && !['under_1s', '1_to_5s', '5_to_30s', 'over_30s'].includes(p.duration)) return false;
   return true;
 }
