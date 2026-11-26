@@ -10,8 +10,11 @@ final class WebServiceTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let session = WebAgentSession(provider: .sparky, storageURL: directory.appendingPathComponent("state.json"), fixture: true)
         defer { session.beginShutdown() }
+        session.webView.setFrameSize(NSSize(width: 390, height: 600))
         session.connect()
         try await waitFor { session.snapshot.ready }
+        let desktopLayout = try await session.webView.evaluateJavaScript("matchMedia('(min-width: 800px)').matches")
+        XCTAssertEqual(desktopLayout as? Bool, true, "A narrow comparison still exposes the Walmart desktop launcher")
         let comparison = UUID()
         let first = await session.send("Compare two reusable water bottles", comparisonID: comparison)
         XCTAssertEqual(first?.status, .observed)

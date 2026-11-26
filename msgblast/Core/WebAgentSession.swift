@@ -920,6 +920,13 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         await unloadInactivePages()
     }
 
+    private func fitShoppingPage(_ view: WKWebView, at url: URL) {
+        guard provider == .sparky, view.bounds.width > 0 else { return }
+        // Keep Walmart’s desktop launcher available when the chat occupies one column.
+        let zoom = provider.isChatURL(url) ? min(1, max(320, view.bounds.width) / 900) : 1
+        if abs(view.pageZoom - zoom) > 0.001 { view.pageZoom = zoom }
+    }
+
     private func refresh(_ page: WebConversationPage) async {
         guard !shuttingDown, !flushingDrafts, !page.loading, !page.refreshing, pages[page.key] === page else { return }
         page.refreshing = true
@@ -937,11 +944,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             return
         }
         let generation = page.generation
-        if provider == .sparky, !fixture, page.view.bounds.width > 0 {
-            // Walmart removes the chat launcher below its desktop breakpoint.
-            let zoom = provider.isChatURL(url) ? min(1, max(320, page.view.bounds.width) / 900) : 1
-            if abs(page.view.pageZoom - zoom) > 0.001 { page.view.pageZoom = zoom }
-        }
+        fitShoppingPage(page.view, at: url)
         do {
             if (provider == .chatgpt || provider == .dots || provider.isShoppingWebsite) && !isSending && provider.isChatURL(url) {
                 _ = try await page.view.callAsyncJavaScript(script.configureInitialLayout, arguments: ["pageZoom": page.view.pageZoom], in: nil, contentWorld: .defaultClient)
