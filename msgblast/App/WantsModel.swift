@@ -4,10 +4,7 @@ import LocalAuthentication
 import Security
 import msgblastCore
 
-/// The Wants panel's state: the person's Want MCP lists, sign-in, and the event feed that keeps
-/// them current.
 @MainActor final class WantsModel: ObservableObject {
-    /// What msgblast remembers between launches, in `wants.json` beside `state.json`.
     struct Saved: Codable, Equatable {
         /// `events/poll` cursor per event type.
         var cursors: [String: String] = [:]
@@ -41,6 +38,7 @@ import msgblastCore
     private var credential: WantCredential?
     private var service: WantService!
     private var poller: Task<Void, Never>?
+    private var latestReload = UUID()
     private var reloadPending = false
     /// Bumped on sign-out so requests still in flight from the old sign-in are discarded.
     private var session = 0
@@ -64,7 +62,6 @@ import msgblastCore
         }
     }
 
-    /// Loads the lists and starts the event feed. Called at launch; does nothing while signed out.
     func start() {
         guard signedIn, poller == nil else { return }
         poller = Task { [weak self] in
@@ -78,6 +75,8 @@ import msgblastCore
 
     @discardableResult func reload() async -> Bool {
         guard signedIn, let service else { return false }
+        let reloadID = UUID()
+        latestReload = reloadID
         let session = self.session
         do {
             var loaded: [WantList] = [], loadedComments: [String: [WantComment]] = [:], loadedSuggestions: [String: [WantEntry]] = [:]
@@ -89,7 +88,7 @@ import msgblastCore
             }
             let visible = Set(loaded.flatMap { ($0.items ?? []).map(\.id) })
             for id in entries.keys where visible.contains(id) { loadedEntries[id] = try await service.entries(itemID: id) }
-            guard session == self.session else { return false }
+            guard session == self.session, latestReload == reloadID else { return false }
             lists = loaded
             comments = loadedComments
             suggestions = loadedSuggestions
@@ -97,7 +96,7 @@ import msgblastCore
             reloadPending = false
             return true
         } catch {
-            if session == self.session { reloadPending = true; fail(error) }
+            if session == self.session, latestReload == reloadID { reloadPending = true; fail(error) }
             return false
         }
     }
@@ -166,7 +165,7 @@ import msgblastCore
                 let page = try await service.poll(Self.activity, cursor: cursor)
                 guard session == self.session else { return delay }
                 cursor = page.cursor
-                changed = changed || !page.events.isEmpty
+                changed = changed || page.hasActivity
                 delay = max(page.nextPoll ?? delay, 5)
                 if !page.hasMore { break }
             }
@@ -176,7 +175,7 @@ import msgblastCore
         }
         if changed, !(await reload()) { return 60 }
         guard session == self.session else { return delay }
-        update { $0.cursors[Self.activity] = cursor }
+        if !update({ $0.cursors[Self.activity] = cursor }) { reloadPending = true }
         return delay
     }
 
@@ -193,7 +192,7 @@ import msgblastCore
         var next = saved
         change(&next)
         guard next != saved else { return true }
-        guard canSave else { return false }
+        guard canSave else { error = "Wants settings could not be read. The existing file has been preserved."; return false }
         do {
             try JSONEncoder().encode(next).write(to: fileURL, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)

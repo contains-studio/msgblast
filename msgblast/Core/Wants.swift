@@ -116,6 +116,11 @@ public struct WantEvent: Codable, Hashable, Sendable {
 }
 
 public enum WantJSON {
+    public static func webURL(_ text: String?) -> URL? {
+        guard let text, let url = URL(string: text), ["http", "https"].contains(url.scheme?.lowercased()), url.host?.isEmpty == false else { return nil }
+        return url
+    }
+
     public static var decoder: JSONDecoder {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
