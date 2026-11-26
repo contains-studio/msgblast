@@ -448,17 +448,23 @@ final class WebServiceTests: XCTestCase {
         XCTAssertTrue(session.snapshot.ready, session.snapshot.reason)
     }
 
-    func testAlexaShoppingNewDocumentCannotReuseAnEarlierSubmissionReceipt() async throws {
+    func testShoppingWebsitesCannotReuseAnEarlierSubmissionReceipt() async throws {
+        for provider in [WebProvider.alexaShopping, .sparky] {
+            try await checkShoppingReceiptAfterReload(provider)
+        }
+    }
+
+    private func checkShoppingReceiptAfterReload(_ provider: WebProvider) async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let storage = directory.appendingPathComponent("alexa.json")
-        let first = WebAgentSession(provider: .alexaShopping, storageURL: storage, fixture: true)
+        let storage = directory.appendingPathComponent(provider.storageFilename)
+        let first = WebAgentSession(provider: provider, storageURL: storage, fixture: true)
         first.connect()
         try await waitFor { first.snapshot.ready }
         let previous = await first.send("First fixture request", comparisonID: UUID())
         XCTAssertEqual(previous?.status, .observed)
         first.beginShutdown()
-        let reopened = WebAgentSession(provider: .alexaShopping, storageURL: storage, fixture: true)
+        let reopened = WebAgentSession(provider: provider, storageURL: storage, fixture: true)
         defer { reopened.beginShutdown() }
         reopened.connect()
         try await waitFor { reopened.snapshot.ready }
@@ -467,11 +473,11 @@ final class WebServiceTests: XCTestCase {
         XCTAssertNotEqual(next?.messageID, previous?.messageID)
         var ambiguous = WebSendAttempt(text: "Another fixture request", status: .uncertain)
         ambiguous.comparisonID = reopened.state.comparisonID
-        ambiguous.receiptContext = WebReceiptContext(originalURL: WebProvider.alexaShopping.homeURL, baseline: [], existingPaths: [], candidateURL: WebProvider.alexaShopping.homeURL)
+        ambiguous.receiptContext = WebReceiptContext(originalURL: provider.homeURL, baseline: [], existingPaths: [], candidateURL: provider.homeURL)
         reopened.updateState { $0.attempts = [ambiguous] }
         try await waitFor { reopened.snapshot.messages.contains { $0.role == "assistant" } }
         await reopened.refresh()
-        XCTAssertEqual(reopened.state.attempts.first?.status, .uncertain, "Amazon’s home URL cannot prove the original chat after reload")
+        XCTAssertEqual(reopened.state.attempts.first?.status, .uncertain, "The storefront URL cannot prove the original chat after reload")
         XCTAssertFalse(reopened.canLinkCurrentConversation, "An earlier message cannot resolve an attempt without its original document identity")
     }
 

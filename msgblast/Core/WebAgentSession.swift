@@ -1191,15 +1191,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             guard let url = webView.url, provider.isChatURL(url), snapshot.ready, !loading else {
                 throw WebSessionFailure.notSent(snapshot.reason)
             }
-            if let destination = provider.canonicalConversationURL(url), state.conversationURLs[id.uuidString] != destination,
-               !provider.sharesOneConversation,
-               !(provider == .dots && state.dotsURL == destination) {
-                throw WebSessionFailure.notSent("This page’s conversation is not linked to this comparison. Review it and continue in the page; nothing was sent from the shared composer.")
-            }
-            if provider == .sparky, let previous = state.attempts.first(where: { $0.comparisonID == id && $0.messageID != nil }),
-               !snapshot.messages.contains(where: { $0.role == "user" && $0.id == previous.messageID }) {
-                throw WebSessionFailure.notSent("Open the original Sparky chat before sending a follow-up, or start a new comparison.")
-            }
+            try verifyConversationForSend(url, comparisonID: id)
             let generation = navigationGeneration
             let expectedURL = snapshot.url
             let preparation: [String: Any]?
@@ -1262,6 +1254,18 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         }
         do { try store(attempt) } catch { self.error = "Could not save the send result. Check \(provider.name) before retrying." }
         return attempt
+    }
+
+    private func verifyConversationForSend(_ url: URL, comparisonID id: UUID) throws {
+        if let destination = provider.canonicalConversationURL(url), state.conversationURLs[id.uuidString] != destination,
+           !provider.sharesOneConversation,
+           !(provider == .dots && state.dotsURL == destination) {
+            throw WebSessionFailure.notSent("This page’s conversation is not linked to this comparison. Review it and continue in the page; nothing was sent from the shared composer.")
+        }
+        if provider == .sparky, let previous = state.attempts.first(where: { $0.comparisonID == id && $0.messageID != nil }),
+           !snapshot.messages.contains(where: { $0.role == "user" && $0.id == previous.messageID }) {
+            throw WebSessionFailure.notSent("Open the original Sparky chat before sending a follow-up, or start a new comparison.")
+        }
     }
 
     private func observeReceipt(_ attempt: inout WebSendAttempt) -> Bool {
