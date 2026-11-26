@@ -84,7 +84,7 @@ Connections use separate transports:
 | --- | --- |
 | Messages | Existing one-to-one iMessage chats, read-only history, and Apple Events submission |
 | App Agents | Installed native Muse, Grok Bot, Wabi, ChatGPT, Dots and Claude apps, with verified destinations and per-comparison receipts |
-| Websites | Muse, ChatGPT, Claude, Grok, Dots, rabbit OS3, and Hark inside persistent WebKit stores |
+| Websites | Muse, ChatGPT, Claude, Grok, Dots, rabbit OS3, Hark, Alexa Shopping, and Walmart Shopping Agent inside persistent WebKit stores |
 | Optional CLI conversations | Separate Codex CLI / Claude Code agents using installed CLI accounts, configured tools, and saved sessions |
 | Grok Bot | Direct webhook call and authenticated reply through a temporary bundled cloudflared tunnel |
 | Remote control (optional) | One paired phone over Tailscale or the LAN, encrypted end to end; the Mac executes every send |
@@ -168,6 +168,13 @@ three-dot menu for **New chat** and **Chat history**. Changing comparisons retai
 the live page and draft, and uncertain sends are never automatically retried.
 Amazon's home URL cannot establish chat identity after a reload. An uncertain
 attempt remains unresolved when its original document can no longer be verified.
+
+Walmart Shopping Agent opens Walmart’s homepage in a separate website profile. Sign in
+and open **Ask Sparky**. Shared questions use the **Message Sparky** field.
+msgblast reads the chat’s sent and received turns and includes Walmart product
+links in the transcript. Comparisons share the open Walmart chat. If Walmart
+opens a fresh chat, a follow-up requires the original turn to be visible again
+or a new comparison. An uncertain submission keeps its original receipt.
 
 **Comparison reports** are a separate execution policy. They summarize available
 Messages replies with restricted local adapters; they do not inherit the full

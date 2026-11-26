@@ -93,3 +93,7 @@ The final color refinement uses the gradient endpoints from Amazon's live
 [Alexa header SVG](https://m.media-amazon.com/images/G/01/Rufus_Desktop/Alexa_For_Shopping_Header.svg):
 `#0ABEFF` at the lower left and `#004EFF` at the upper right. ImageGen was
 instructed to change only the “alexa” fill and preserve the layout and gray tagline.
+
+## Walmart Shopping Agent
+
+`WebAgentIcons/sparky.png` is the smiling final frame of the [Sparky animation used on Walmart’s shopping assistant button](https://i5.walmartimages.com/dfw/63fd9f59-b68c/a5caf1fe-9c1e-4704-ab58-6f1808b2f3a4/v1/sparky_expanded_fab.gif), scaled to 256 × 256.

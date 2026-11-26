@@ -395,11 +395,15 @@ private struct OnboardingProviderView: View {
                 cliSetup(provider)
                 Spacer()
             } else {
+                if session.provider == .sparky {
+                    Text("Sign in to Walmart and open Ask Sparky. Each comparison continues the selected Walmart chat and can use its earlier context.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
                 if session.provider == .hark {
                     Text("Sign in to Hark here. Use its own composer to chat; shared sending is not supported yet.")
                         .font(.callout).foregroundStyle(.secondary)
                 }
-                if session.provider.sharesOneConversation {
+                if session.provider.sharesOneConversation && session.provider != .sparky {
                     Text(session.provider == .alexaShopping
                         ? "Sign in to Amazon here. Alexa opens after sign-in when available. Comparisons continue the selected Amazon chat and can use its earlier context. Use Alexa’s three-dot menu for New chat or Chat history."
                         : "rabbit OS3 uses one conversation for your account. Each comparison continues that conversation and can use its earlier context.")

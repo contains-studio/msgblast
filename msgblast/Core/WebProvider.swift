@@ -1,7 +1,7 @@
 import Foundation
 
 public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
-    case muse, chatgpt, claude, grok, codexCLI, claudeCode, dots, grokbot, os3, hark, alexaShopping, museApp, grokBotApp, wabi, geminiApp, chatgptApp, dotsApp, claudeApp
+    case muse, chatgpt, claude, grok, codexCLI, claudeCode, dots, grokbot, os3, hark, alexaShopping, sparky, museApp, grokBotApp, wabi, geminiApp, chatgptApp, dotsApp, claudeApp
     public static let webDefaults: [Self] = [.muse, .chatgpt, .claude, .grok]
     public static let settingsOnlyWebProviders: [Self] = [.muse, .chatgpt, .claude, .dots, .grok]
     public static let optionalProviders: [Self] = [.codexCLI, .claudeCode]
@@ -24,7 +24,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
         switch self { case .codexCLI: .codex; case .claudeCode: .claude; default: nil }
     }
     public var name: String {
-        switch self { case .muse: "Muse Web"; case .chatgpt: "ChatGPT Web"; case .claude: "Claude Web"; case .grok: "Grok Web"; case .codexCLI: "Codex CLI"; case .claudeCode: "Claude Code"; case .dots: "Dots Web"; case .grokbot: "Grok Bot"; case .os3: "rabbit OS3 Web"; case .hark: "Hark Web"; case .alexaShopping: "Alexa Shopping Web"; case .museApp: "Muse"; case .grokBotApp: "Grok Bot"; case .wabi: "Wabi"; case .geminiApp: "Gemini"; case .chatgptApp: "ChatGPT"; case .dotsApp: "Dots"; case .claudeApp: "Claude" }
+        switch self { case .muse: "Muse Web"; case .chatgpt: "ChatGPT Web"; case .claude: "Claude Web"; case .grok: "Grok Web"; case .codexCLI: "Codex CLI"; case .claudeCode: "Claude Code"; case .dots: "Dots Web"; case .grokbot: "Grok Bot"; case .os3: "rabbit OS3 Web"; case .hark: "Hark Web"; case .alexaShopping: "Alexa Shopping Web"; case .sparky: "Walmart Shopping Agent"; case .museApp: "Muse"; case .grokBotApp: "Grok Bot"; case .wabi: "Wabi"; case .geminiApp: "Gemini"; case .chatgptApp: "ChatGPT"; case .dotsApp: "Dots"; case .claudeApp: "Claude" }
     }
     public var homeURL: URL {
         switch self {
@@ -35,6 +35,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
         case .grok: URL(string: "https://grok.com/")!
         case .grokbot, .grokBotApp: URL(string: "https://x.ai/bot")!
         case .alexaShopping: URL(string: "https://www.amazon.com/")!
+        case .sparky: URL(string: "https://www.walmart.com/")!
         case .hark: URL(string: "https://hark.com/chat")!
         case .geminiApp: URL(string: "https://gemini.google/mac")!
         case .wabi: URL(string: "https://wabi.ai/")!
@@ -46,17 +47,18 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
     var localConversationDirectoryName: String {
         switch self { case .codexCLI: "chatgpt"; case .claudeCode: "claude"; default: rawValue }
     }
-    public var sharesOneConversation: Bool { self == .os3 || self == .alexaShopping || self == .dotsApp || (desktopApp != nil && ![.museApp, .geminiApp, .chatgptApp, .dotsApp, .claudeApp].contains(self)) }
+    public var sharesOneConversation: Bool { self == .os3 || isShoppingWebsite || self == .dotsApp || (desktopApp != nil && ![.museApp, .geminiApp, .chatgptApp, .dotsApp, .claudeApp].contains(self)) }
+    var isShoppingWebsite: Bool { self == .alexaShopping || self == .sparky }
     public var newChatURL: URL { self == .muse ? URL(string: "https://muse.ai/thread/new")! : homeURL }
-    var browserCookieHost: String { self == .alexaShopping ? "amazon.com" : homeURL.host! }
+    var browserCookieHost: String { switch self { case .alexaShopping: "amazon.com"; case .sparky: "walmart.com"; default: homeURL.host! } }
     public func isSavedConversation(_ url: URL) -> Bool {
-        if self == .alexaShopping { return isChatURL(url) }
+        if isShoppingWebsite { return isChatURL(url) }
         guard isChatURL(url), url.query == nil, url.fragment == nil else { return false }
         return sharesOneConversation || (!url.path.isEmpty && url.path != "/" && url.path != newChatURL.path && (self != .dots || url.path != "/dots/"))
     }
     // A Grok response selector is not part of the persistent conversation identity.
     public func canonicalConversationURL(_ url: URL) -> URL? {
-        if self == .alexaShopping { return isChatURL(url) ? homeURL : nil }
+        if isShoppingWebsite { return isChatURL(url) ? homeURL : nil }
         guard isChatURL(url), var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
         if self == .grok, let items = parts.queryItems, items.count == 1,
            items[0].name == "rid", let value = items[0].value, value.utf8.count == 36, UUID(uuidString: value) != nil {
@@ -85,7 +87,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
         case .alexaShopping:
             let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
             return ["", "/", "/ref=nav_logo", "/ref=nav_signin"].contains(path) && url.fragment == nil && items.allSatisfy { ["ref", "ref_"].contains($0.name) }
-        case .hark: return url.query == nil && url.fragment == nil && path == "/chat"
+        case .hark, .sparky: return url.query == nil && url.fragment == nil && path == homeURL.path
         case .os3: return path.isEmpty || path == "/"
         }
     }

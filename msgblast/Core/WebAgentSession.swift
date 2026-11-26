@@ -28,7 +28,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if provider == .alexaShopping {
             configuration.applicationNameForUserAgent = "Version/26.0 Safari/605.1.15"
         }
-        let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
+        let frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        let view = provider == .sparky ? SparkyWebView(frame: frame, configuration: configuration) : WKWebView(frame: frame, configuration: configuration)
         view.navigationDelegate = self; view.uiDelegate = self
         view.allowsBackForwardNavigationGestures = true
         return WebConversationPage(comparisonID: id, view: view)
@@ -46,7 +47,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         // Desktop apps share a conversation too, but their history is native and kept per comparison.
         if sharesPage {
             // The saved copy already merges everything the page has shown for this comparison.
-            return state.sharedTurns[id.uuidString] ?? Self.comparisonTurns(snapshot.messages, attempts: state.attempts)[id] ?? []
+            return state.sharedTurns[id.uuidString] ?? Self.comparisonTurns(snapshot.messages, attempts: state.attempts, allowTextFallback: provider != .sparky)[id] ?? []
         }
         if state.comparisonID == id { return snapshot.messages }
         return pages[id.uuidString]?.snapshot.messages ?? state.localConversations[id.uuidString] ?? []
@@ -65,7 +66,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     /// Saving waits for the page to settle rather than writing on every streamed update.
     private func rememberSharedTurns() {
         guard sharesPage, !shuttingDown else { return }
-        let live = Self.comparisonTurns(snapshot.messages, attempts: state.attempts)
+        let live = Self.comparisonTurns(snapshot.messages, attempts: state.attempts, allowTextFallback: provider != .sparky)
         let kept = Self.keepingSharedTurns(state.sharedTurns, live: live, onPage: Set(snapshot.messages.map(\.id)))
         guard kept != state.sharedTurns else { return }
         state.sharedTurns = kept
@@ -120,7 +121,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     /// Splits a shared page by request: each request a comparison sent owns its user message and the
     /// replies up to the next user message. Turns from before any request, or from requests sent
     /// elsewhere, belong to no comparison; a comparison that has sent nothing has no turns.
-    static func comparisonTurns(_ messages: [WebPageMessage], attempts: [WebSendAttempt]) -> [UUID: [WebPageMessage]] {
+    static func comparisonTurns(_ messages: [WebPageMessage], attempts: [WebSendAttempt], allowTextFallback: Bool = true) -> [UUID: [WebPageMessage]] {
         let userIndexes = messages.indices.filter { messages[$0].role == "user" }
         let indexByID = Dictionary(userIndexes.map { (messages[$0].id, $0) }, uniquingKeysWith: { first, _ in first })
         let texts = messages.map { normalized($0.text) }
@@ -130,7 +131,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         for attempt in sent { if let id = attempt.messageID, let index = indexByID[id] { owner[index] = attempt.comparisonID } }
         // An unattributed request takes the nearest unowned matching message after the previous request.
         var previous = -1
-        for attempt in sent {
+        for attempt in sent where allowTextFallback {
             if let id = attempt.messageID, let index = indexByID[id] { previous = index; continue }
             // Messages already on the page when it was submitted are never its own.
             let text = normalized(attempt.text), earliest = max(previous + 1, attempt.receiptContext?.baseline.count ?? 0)
@@ -277,7 +278,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public var isReadyForOnboarding: Bool {
         guard isEnabled, connected, !storageFailed, !loading else { return false }
         if provider.usesNativeConversation { return snapshot.ready }
-        return !webView.isLoading && canInspectWebsite && snapshot.signedIn == true && (provider != .alexaShopping || snapshot.draftAvailable == true)
+        return !webView.isLoading && canInspectWebsite && snapshot.signedIn == true && (!provider.isShoppingWebsite || snapshot.draftAvailable == true)
     }
 
     public convenience init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil) {
@@ -487,7 +488,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if provider == .grokbot && grokBotReplyURL == nil { grokBotConnectionReady = nil }
         if provider.usesNativeConversation { connect(); Task { await refresh() }; return }
         if !connected { connect() }
-        else if fixture || (provider == .alexaShopping && webView.url == nil) { loadComparisonChat() }
+        else if fixture || (provider.isShoppingWebsite && webView.url == nil) { loadComparisonChat() }
         else { webView.reload() }
     }
 
@@ -564,7 +565,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
               let url = provider.canonicalConversationURL(current),
               webView.url.flatMap(provider.canonicalConversationURL) == url,
               (provider == .dots || provider.sharesOneConversation || !state.conversationURLs.contains(where: { $0.key != comparison.uuidString && provider.canonicalConversationURL($0.value) == url })) else { return false }
-        if provider == .alexaShopping,
+        if provider.isShoppingWebsite,
            receiptGenerations[attempt.id]?.matches(currentPage()) != true,
            manualRecoveryScopes[attempt.id]?.page.matches(currentPage()) != true { return false }
         if let saved = state.conversationURLs[comparison.uuidString], provider.canonicalConversationURL(saved) != url { return false }
@@ -938,8 +939,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         }
         let generation = page.generation
         do {
-            if (provider == .chatgpt || provider == .dots || provider == .alexaShopping) && !isSending && provider.isChatURL(url) {
-                _ = try await page.view.callAsyncJavaScript(script.configureInitialLayout, arguments: [:], in: nil, contentWorld: .defaultClient)
+            if (provider == .chatgpt || provider == .dots || provider.isShoppingWebsite) && !isSending && provider.isChatURL(url) {
+                _ = try await page.view.callAsyncJavaScript(script.configureInitialLayout, arguments: ["pageZoom": page.view.pageZoom], in: nil, contentWorld: .defaultClient)
                 guard generation == page.generation, !shuttingDown, !flushingDrafts else { return }
             }
             let result = try await page.view.callAsyncJavaScript(script.inspect, arguments: [:], in: nil, contentWorld: .defaultClient)
@@ -1191,11 +1192,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             guard let url = webView.url, provider.isChatURL(url), snapshot.ready, !loading else {
                 throw WebSessionFailure.notSent(snapshot.reason)
             }
-            if let destination = provider.canonicalConversationURL(url), state.conversationURLs[id.uuidString] != destination,
-               !provider.sharesOneConversation,
-               !(provider == .dots && state.dotsURL == destination) {
-                throw WebSessionFailure.notSent("This page’s conversation is not linked to this comparison. Review it and continue in the page; nothing was sent from the shared composer.")
-            }
+            try verifyConversationForSend(url, comparisonID: id)
             let generation = navigationGeneration
             let expectedURL = snapshot.url
             let preparation: [String: Any]?
@@ -1215,7 +1212,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             }
             let baseline = try JSONDecoder().decode([WebPageMessage].self, from: JSONSerialization.data(withJSONObject: messages))
             let existingPaths = Set(paths)
-            attempt.receiptContext = WebReceiptContext(originalURL: provider == .alexaShopping ? provider.homeURL : url, baseline: baseline, existingPaths: existingPaths)
+            attempt.receiptContext = WebReceiptContext(originalURL: provider.isShoppingWebsite ? provider.homeURL : url, baseline: baseline, existingPaths: existingPaths)
             receiptGenerations[attempt.id] = WebReceiptGeneration(page: currentPage(), generation: generation)
             let preparedDraft = preparation?["preparedDraft"] as? String ?? text
             try await waitBeforeClick(preparedDraft, expectedURL: expectedURL, generation: generation, action: action)
@@ -1260,6 +1257,18 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return attempt
     }
 
+    private func verifyConversationForSend(_ url: URL, comparisonID id: UUID) throws {
+        if let destination = provider.canonicalConversationURL(url), state.conversationURLs[id.uuidString] != destination,
+           !provider.sharesOneConversation,
+           !(provider == .dots && state.dotsURL == destination) {
+            throw WebSessionFailure.notSent("This page’s conversation is not linked to this comparison. Review it and continue in the page; nothing was sent from the shared composer.")
+        }
+        if provider == .sparky, let previous = state.attempts.first(where: { $0.comparisonID == id && $0.messageID != nil }),
+           !snapshot.messages.contains(where: { $0.role == "user" && $0.id == previous.messageID }) {
+            throw WebSessionFailure.notSent("Open the original Sparky chat before sending a follow-up, or start a new comparison.")
+        }
+    }
+
     private func observeReceipt(_ attempt: inout WebSendAttempt) -> Bool {
         observeReceipt(&attempt, in: currentPage())
     }
@@ -1276,7 +1285,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard snapshot.submissionInterrupted != true, let current = URL(string: snapshot.url) else { return invalidate() }
         // Across reloads/restarts only the already pinned candidate can be recovered.
         let pinned = attempt.pinnedConversationURL
-        guard receiptGenerations[attempt.id]?.matches(page) == true || (provider != .alexaShopping && pinned != nil) else { return invalidate() }
+        guard receiptGenerations[attempt.id]?.matches(page) == true || (!provider.isShoppingWebsite && pinned != nil) else { return invalidate() }
         if !provider.sharesOneConversation, context.originalURL == provider.newChatURL, current == context.originalURL { return false }
         guard provider.acceptsReceipt(from: context.originalURL, at: current), let url = provider.canonicalConversationURL(current),
               pinned == nil || pinned == url,
@@ -2750,6 +2759,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard let page = page(for: webView) else { popupURL = webView.url?.absoluteString ?? ""; return }
         page.loading = false
+        (webView as? SparkyWebView)?.fitViewport()
         if let navigation = page.navigationError, page.error == navigation { page.error = nil }
         page.navigationError = nil
         publish(page)
@@ -2800,6 +2810,21 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return view
     }
     public func webViewDidClose(_ webView: WKWebView) { if webView === popup { closePopup() } }
+}
+
+@MainActor
+private final class SparkyWebView: WKWebView {
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        fitViewport()
+    }
+
+    func fitViewport() {
+        guard bounds.width > 0 else { return }
+        // Walmart removes the chat launcher below its desktop breakpoint.
+        let zoom = url.map(WebProvider.sparky.isChatURL) == true ? min(1, max(320, bounds.width) / 900) : 1
+        if abs(pageZoom - zoom) > 0.001 { pageZoom = zoom }
+    }
 }
 
 @MainActor

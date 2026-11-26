@@ -261,3 +261,6 @@ SOFTWARE.
 
 Embedded CuaDriver
 The bundled CuaDriver executable is provided by trycua/cua. Its pinned version, upstream source revision, and archive checksums are in cua-driver.json. See CuaDriverNotices.txt for its license and third-party notices.
+
+Walmart Shopping Agent uses a still frame of Walmart’s Sparky button artwork.
+The Walmart and Sparky names and artwork belong to Walmart.

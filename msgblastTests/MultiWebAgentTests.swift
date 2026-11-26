@@ -1506,7 +1506,7 @@ final class MultiWebAgentTests: XCTestCase {
         XCTAssertEqual(web.availableSessions[0].state.sessionID, id)
         XCTAssertEqual(web.availableSessions[0].state.draft, "Legacy draft")
         XCTAssertEqual(web.comparisonID, comparison)
-        XCTAssertEqual(Set(web.availableSessions.map { $0.state.sessionID }).count, 8)
+        XCTAssertEqual(Set(web.availableSessions.map { $0.state.sessionID }).count, web.availableSessions.count)
         for session in web.availableSessions where session.provider.personalAgentProvider == nil { XCTAssertEqual(session.webView.configuration.websiteDataStore.identifier, session.state.sessionID) }
         web.toggle(web.availableSessions[2])
         let reopened = WebAgents(directory: directory, fixture: false)
@@ -1558,7 +1558,7 @@ final class MultiWebAgentTests: XCTestCase {
         try Data("invalid persisted state".utf8).write(to: directory.appendingPathComponent(WebProvider.claude.storageFilename))
         let web = WebAgents(directory: directory, fixture: true)
         web.availableSessions.forEach { $0.connect() }
-        try await waitFor { web.availableSessions.filter { $0.provider != .claude && $0.provider != .hark }.allSatisfy { $0.snapshot.ready } }
+        try await waitFor { web.availableSessions.filter { $0.provider != .claude && $0.provider.supportsSharedSubmissions }.allSatisfy { $0.snapshot.ready } }
         let chatgpt = web.availableSessions[1], claude = web.availableSessions[2]
         _ = try await chatgpt.webView.callAsyncJavaScript("document.querySelector('textarea,[contenteditable]').value = 'Keep this draft'", arguments: [:], in: nil, contentWorld: .page)
         let results = await WebAgents.send("New question", to: web.availableSessions)

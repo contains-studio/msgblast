@@ -5,6 +5,97 @@ import msgblastRemoteProtocol
 
 @MainActor
 final class WebServiceTests: XCTestCase {
+    func testSparkyFollowUpUsesTheSameTurnsAndKeepsProductLinks() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .sparky, storageURL: directory.appendingPathComponent("state.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.webView.setFrameSize(NSSize(width: 390, height: 600))
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let desktopLayout = try await session.webView.evaluateJavaScript("matchMedia('(min-width: 800px)').matches")
+        XCTAssertEqual(desktopLayout as? Bool, true, "A narrow comparison still exposes the Walmart desktop launcher")
+        let comparison = UUID()
+        let first = await session.send("Compare two reusable water bottles", comparisonID: comparison)
+        XCTAssertEqual(first?.status, .observed)
+        try await waitFor { session.messagesForComparison(comparison).last?.text.contains("https://www.walmart.com/ip/Fixture-bottle/123456") == true }
+        let second = await session.send("Which one is lighter?", comparisonID: comparison)
+        XCTAssertEqual(second?.status, .observed)
+        try await waitFor { session.messagesForComparison(comparison).count == 4 }
+        _ = try await session.webView.evaluateJavaScript("document.querySelector('textarea').value='My own draft'")
+        let blocked = await session.send("Another question", comparisonID: comparison)
+        XCTAssertEqual(blocked?.status, .notSent)
+        let draft = try await session.webView.evaluateJavaScript("document.querySelector('textarea').value")
+        XCTAssertEqual(draft as? String, "My own draft")
+        _ = try await session.webView.evaluateJavaScript("document.querySelector('textarea').value='';document.querySelector('#turns').replaceChildren()")
+        let newChat = await session.send("Follow up in the original chat", comparisonID: comparison)
+        XCTAssertEqual(newChat?.status, .notSent)
+        XCTAssertTrue(newChat?.detail?.contains("original Sparky chat") == true)
+    }
+
+    func testSparkyFreshChatCannotClaimAnOlderComparisonByRepeatingItsQuestion() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .sparky, storageURL: directory.appendingPathComponent("state.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let comparison = UUID()
+        _ = await session.send("Compare bottles", comparisonID: comparison)
+        try await waitFor { session.messagesForComparison(comparison).count == 2 }
+        let original = session.messagesForComparison(comparison)
+        _ = try await session.webView.evaluateJavaScript("turns.replaceChildren(); turn('Sent message,', 'Compare bottles'); turn('Received message,', 'Different private answer'); true")
+        await session.refresh()
+        XCTAssertEqual(session.messagesForComparison(comparison), original)
+    }
+
+    func testSparkyImportsWalmartCookiesAndRecoversAfterAnUnansweredTurn() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .sparky, storageURL: directory.appendingPathComponent("state.json"), fixture: true)
+        defer { session.beginShutdown() }
+        let cookies = [".walmart.com", ".other.test"].compactMap { domain in
+            HTTPCookie(properties: [.domain: domain, .path: "/", .name: "test", .value: "fixture"])
+        }
+        let count = try await session.registerBrowserCookies(cookies)
+        XCTAssertEqual(count, 1)
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        _ = try await session.webView.evaluateJavaScript("turn('Sent message,','Unanswered question'); true")
+        await session.refresh()
+        XCTAssertFalse(session.snapshot.ready)
+        _ = try await session.webView.callAsyncJavaScript(
+            "const now=Date.now.bind(Date); Date.now=()=>now()+121000;",
+            arguments: [:], in: nil, contentWorld: .defaultClient)
+        await session.refresh()
+        XCTAssertTrue(session.snapshot.ready)
+        XCTAssertEqual(session.snapshot.messages.map(\.text), ["Unanswered question"])
+    }
+
+    func testSparkySignInPromptIgnoresStorefrontInputs() async throws {
+        let page = WKWebView()
+        page.loadHTMLString("""
+            <input type="search" value="Leave this search alone"><button>Sign in</button>
+            <div role="dialog" data-testid="sparky-fab"><button>Sign in</button></div>
+            """, baseURL: WebProvider.sparky.homeURL)
+        try await waitFor { !page.isLoading && page.url == WebProvider.sparky.homeURL }
+        let inspect = WebPageScript(provider: .sparky).inspect
+        func snapshot() async throws -> WebPageSnapshot {
+            let value = try await page.callAsyncJavaScript(inspect, arguments: [:], in: nil, contentWorld: .defaultClient)
+            return try JSONDecoder().decode(WebPageSnapshot.self, from: JSONSerialization.data(withJSONObject: XCTUnwrap(value)))
+        }
+        let signedOut = try await snapshot()
+        XCTAssertEqual(signedOut.signedIn, false)
+        XCTAssertFalse(signedOut.ready)
+        XCTAssertEqual(signedOut.draftAvailable, false)
+        _ = try await page.evaluateJavaScript("document.querySelector('[role=dialog]').hidden = true")
+        let closed = try await snapshot()
+        XCTAssertNil(closed.signedIn)
+        XCTAssertFalse(closed.ready)
+        let search = try await page.evaluateJavaScript("document.querySelector('input').value")
+        XCTAssertEqual(search as? String, "Leave this search alone")
+    }
+
     func testAlexaShoppingSignedOutSetupOpensAmazonSignInInsteadOfTheStorefront() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -399,17 +490,23 @@ final class WebServiceTests: XCTestCase {
         XCTAssertTrue(session.snapshot.ready, session.snapshot.reason)
     }
 
-    func testAlexaShoppingNewDocumentCannotReuseAnEarlierSubmissionReceipt() async throws {
+    func testShoppingWebsitesCannotReuseAnEarlierSubmissionReceipt() async throws {
+        for provider in [WebProvider.alexaShopping, .sparky] {
+            try await checkShoppingReceiptAfterReload(provider)
+        }
+    }
+
+    private func checkShoppingReceiptAfterReload(_ provider: WebProvider) async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let storage = directory.appendingPathComponent("alexa.json")
-        let first = WebAgentSession(provider: .alexaShopping, storageURL: storage, fixture: true)
+        let storage = directory.appendingPathComponent(provider.storageFilename)
+        let first = WebAgentSession(provider: provider, storageURL: storage, fixture: true)
         first.connect()
         try await waitFor { first.snapshot.ready }
         let previous = await first.send("First fixture request", comparisonID: UUID())
         XCTAssertEqual(previous?.status, .observed)
         first.beginShutdown()
-        let reopened = WebAgentSession(provider: .alexaShopping, storageURL: storage, fixture: true)
+        let reopened = WebAgentSession(provider: provider, storageURL: storage, fixture: true)
         defer { reopened.beginShutdown() }
         reopened.connect()
         try await waitFor { reopened.snapshot.ready }
@@ -418,11 +515,11 @@ final class WebServiceTests: XCTestCase {
         XCTAssertNotEqual(next?.messageID, previous?.messageID)
         var ambiguous = WebSendAttempt(text: "Another fixture request", status: .uncertain)
         ambiguous.comparisonID = reopened.state.comparisonID
-        ambiguous.receiptContext = WebReceiptContext(originalURL: WebProvider.alexaShopping.homeURL, baseline: [], existingPaths: [], candidateURL: WebProvider.alexaShopping.homeURL)
+        ambiguous.receiptContext = WebReceiptContext(originalURL: provider.homeURL, baseline: [], existingPaths: [], candidateURL: provider.homeURL)
         reopened.updateState { $0.attempts = [ambiguous] }
         try await waitFor { reopened.snapshot.messages.contains { $0.role == "assistant" } }
         await reopened.refresh()
-        XCTAssertEqual(reopened.state.attempts.first?.status, .uncertain, "Amazon’s home URL cannot prove the original chat after reload")
+        XCTAssertEqual(reopened.state.attempts.first?.status, .uncertain, "The storefront URL cannot prove the original chat after reload")
         XCTAssertFalse(reopened.canLinkCurrentConversation, "An earlier message cannot resolve an attempt without its original document identity")
     }
 
