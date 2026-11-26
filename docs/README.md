@@ -32,8 +32,7 @@ Local development does not need production release credentials.
 - [Outside agents](outside-agents.md): connecting Claude Code, Codex, Cursor,
   Gemini CLI and Claude Desktop, approval levels, the tools, @-mentions, and how
   sends from agents behave.
-- [Wants](wants.md): The Want MCP lists, asking agents for offers, forwarding
-  comments and suggestions, sign-in and the MCP client.
+- [Wants](wants.md) covers lists, offers, comments, suggestions and write-key sign-in.
 - [Grok Bot over Tailscale](grok-bot.md): the tailnet MCP endpoint, setup, and
   readiness checks.
 - [Update recovery](update-recovery.md): preserving state when an older app cannot

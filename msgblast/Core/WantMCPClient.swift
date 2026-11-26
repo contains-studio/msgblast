@@ -15,10 +15,7 @@ public enum WantError: Error, Equatable, LocalizedError {
     }
 }
 
-/// What the Wants panel needs from The Want MCP. `WantMCPClient` talks to the live server;
-/// `WantFixture` stands in for Demo and previews.
 public protocol WantService: Sendable {
-    /// Ids of the lists this credential can write.
     func writableListIDs() async throws -> [String]
     /// The list and its items, every page. Items carry entries only from servers that still send them.
     func list(_ id: String) async throws -> WantList
@@ -32,8 +29,9 @@ public protocol WantService: Sendable {
 }
 
 public struct WantEventPage: Equatable, Sendable {
-    public var events: [WantEvent], cursor: String?, hasMore: Bool, nextPoll: TimeInterval?
-    public init(events: [WantEvent], cursor: String?, hasMore: Bool = false, nextPoll: TimeInterval? = nil) {
+    public var events: [WantEvent], cursor: String?, hasMore: Bool, nextPoll: TimeInterval?, hasActivity: Bool
+    public init(events: [WantEvent], cursor: String?, hasMore: Bool = false, nextPoll: TimeInterval? = nil, hasActivity: Bool? = nil) {
+        self.hasActivity = hasActivity ?? !events.isEmpty
         self.events = events; self.cursor = cursor; self.hasMore = hasMore; self.nextPoll = nextPoll
     }
 }
@@ -103,10 +101,13 @@ public struct WantMCPClient: WantService {
 
     public func poll(_ type: String, cursor: String?) async throws -> WantEventPage {
         let result = try await request("events/poll", ["name": type, "arguments": [String: Any](), "cursor": cursor ?? NSNull(), "maxEvents": 50])
-        let rows = result["events"] as? [[String: Any]] ?? []
-        let events = try rows.compactMap { $0["data"] }.map { try WantJSON.decoder.decode(WantEvent.self, from: JSONSerialization.data(withJSONObject: $0)) }
+        let rows = result["events"] as? [Any] ?? []
+        let events = rows.compactMap { row -> WantEvent? in
+            guard let data = (row as? [String: Any])?["data"] as? [String: Any] else { return nil }
+            return try? WantJSON.decoder.decode(WantEvent.self, from: JSONSerialization.data(withJSONObject: data))
+        }
         return WantEventPage(events: events, cursor: result["cursor"] as? String ?? cursor, hasMore: result["hasMore"] as? Bool ?? false,
-                             nextPoll: (result["nextPollMs"] as? Double).map { $0 / 1000 })
+                             nextPoll: (result["nextPollMs"] as? Double).map { $0 / 1000 }, hasActivity: !rows.isEmpty)
     }
 
     /// A tool's `structuredContent`. A result with `isError` throws its text.
