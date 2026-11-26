@@ -49,6 +49,7 @@ final class WebServiceTests: XCTestCase {
         let offer = try XCTUnwrap(session.actionsForComparison(comparison))
         let productReply = try XCTUnwrap(session.messagesForComparison(comparison).last)
         let text = productReply.text
+        XCTAssertTrue(text.contains("lighter.\nCompare sizes below."))
         let legacy = WebPageMessage(id: productReply.id, role: "assistant", text: String(repeating: "Old flattened product card ", count: 40))
         let upgraded = WebAgentSession.keepingSharedTurns([comparison.uuidString: [legacy]], live: [comparison: [productReply]], onPage: [productReply.id])
         XCTAssertEqual(upgraded[comparison.uuidString], [productReply])

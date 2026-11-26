@@ -142,7 +142,9 @@ struct WebPageScript {
                 const u=new URL(a.getAttribute('href'),location.href);
                 if (u.origin===location.origin && u.pathname.startsWith('/ip/')) links.add(u.origin+u.pathname);
             }
-            copy.querySelectorAll('br,p,li').forEach(n=>n.append('\n'));
+            copy.querySelectorAll('br').forEach(n=>n.replaceWith('\n'));
+            copy.querySelectorAll('p,li,div,tr').forEach(n=>{ n.prepend('\n'); n.append('\n'); });
+            copy.querySelectorAll('th,td').forEach(n=>n.append(' '));
             const body=copy.textContent.split('\n').map(normalized).join('\n').replace(/\n{3,}/g,'\n\n').trim();
             const text=[body,...links].filter(Boolean).join('\n');
             return text ? [{id,role,text,...(formattedProducts ? {formattedProducts:true} : {})}] : [];
@@ -571,6 +573,7 @@ struct WebPageScript {
         send.onclick=()=>{
             document.querySelector('#welcome').hidden=true;turn('Sent message,',input.value);input.value='';input.oninput();
             setTimeout(()=>{const reply=turn('Received message,','The steel bottle keeps water cold. The plastic bottle is lighter. ');
+                const note=document.createElement('div');note.textContent='Compare sizes below.';reply.append(note);
                 const comparison=document.createElement('div');comparison.dataset.testid='product-comparison-table';
                 const table=document.createElement('table'),header=table.insertRow();header.insertCell();
                 for (const [name,id] of [['Steel bottle','123456'],['Plastic bottle','234567']]) {
