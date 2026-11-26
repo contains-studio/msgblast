@@ -403,7 +403,7 @@ struct ConversationView: View {
 
     /// Photos inline (up to 240 pt), other files as a row; both open on tap.
     private func attachmentStack(_ turn: RemoteTurn, mine: Bool) -> some View {
-        let walmart = turn.agentID.flatMap { app.store.projection.agents[$0] }?.product == .sparky
+        let walmart = turn.agentID.flatMap { app.store.projection.agents[$0] }?.product.rawValue == "sparky"
         let files = turn.attachments.enumerated().map { index, file in
             SharedAttachment(turnID: turn.id, index: index, filename: file.filename, mimeType: file.mimeType, byteCount: file.byteCount,
                              agentID: mine ? nil : turn.agentID, date: turn.created)
