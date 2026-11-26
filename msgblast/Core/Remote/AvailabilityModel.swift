@@ -59,6 +59,7 @@ public struct AgentSessionSignals: Sendable, Equatable {
     public var isSending: Bool
     public var loading: Bool
     public var snapshotReady: Bool
+    public var suggestedPrompts: [String]?
     public var snapshotReason: String
     public var signedIn: Bool?
     public var signedOut: Bool?
@@ -99,6 +100,7 @@ public struct AgentSessionSignals: Sendable, Equatable {
                   isStorageAvailable: session.isStorageAvailable, selected: session.state.selected, connected: session.connected,
                   isSending: session.isSending, loading: session.loading, snapshotReady: session.snapshot.ready, snapshotReason: session.snapshot.reason,
                   signedIn: session.snapshot.signedIn, signedOut: session.snapshot.signedOut)
+        suggestedPrompts = session.suggestedPrompts
         if session.provider.desktopApp != nil {
             desktopInstalled = session.desktopInstallation.isInstalled
             desktopRunning = session.desktopInstallation.isRunning
@@ -175,11 +177,13 @@ public enum AvailabilityCalculator {
             }
         }
         let shared = provider.supportsSharedSubmissions && provider.isAvailableInBuild
-        return AgentAvailability(agentID: s.agentID, product: product(provider), form: form, displayName: s.name, avatarRef: nil,
+        var availability = AgentAvailability(agentID: s.agentID, product: product(provider), form: form, displayName: s.name, avatarRef: nil,
             visibleInGrid: m.visibleGridIDs.contains(s.gridID), selectedForSharedSend: s.isEnabled && s.selected && shared,
             capabilities: AgentCapabilities(sharedSend: shared, privateSend: shared, attachments: false, namedCopies: provider.supportsCopies,
                                             endConversation: true, sharesOneConversation: provider.sharesOneConversation),
             readiness: d.readiness, reasons: d.reasons, observedAt: now, source: d.source)
+        availability.suggestedPrompts = s.suggestedPrompts
+        return availability
     }
 
     private static func websiteAvailability(_ s: AgentSessionSignals, into d: inout AvailabilityDraft) {

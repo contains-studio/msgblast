@@ -150,6 +150,18 @@ struct ComposeBar: View {
                     .buttonStyle(.plain).accessibilityLabel("Cancel Reply")
             }
         }
+        if conversationID == nil, recipients.count == 1, let id = recipients.first,
+           let prompts = app.store.projection.agents[id]?.suggestedPrompts, !prompts.isEmpty, !hasContent {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack {
+                    ForEach(prompts, id: \.self) { prompt in
+                        Button(prompt) { text = prompt; send() }
+                            .buttonStyle(.bordered).buttonBorderShape(.capsule)
+                    }
+                }
+            }
+            .disabled(sending || preparing || block?.allowsSend == false)
+        }
         if let status { statusLine(status) }
         if recipientsOpen, let selection, choosesRecipients {
             RecipientStrip(app: app, members: members, selection: selection)

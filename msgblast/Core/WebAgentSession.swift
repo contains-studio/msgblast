@@ -47,26 +47,35 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         // Desktop apps share a conversation too, but their history is native and kept per comparison.
         if sharesPage {
             // The saved copy already merges everything the page has shown for this comparison.
-            return state.sharedTurns[id.uuidString] ?? Self.comparisonTurns(snapshot.messages, attempts: state.attempts)[id] ?? []
+            return state.sharedTurns[id.uuidString] ?? Self.comparisonTurns(snapshot.messages, attempts: transcriptAttempts)[id] ?? []
         }
         if state.comparisonID == id { return snapshot.messages }
         return pages[id.uuidString]?.snapshot.messages ?? state.localConversations[id.uuidString] ?? []
     }
+    private var transcriptAttempts: [WebSendAttempt] {
+        provider == .sparky ? state.attempts.filter { $0.action != true } : state.attempts
+    }
     private var sharedTurnsSave: Task<Void, Never>?
     private var sharedTurnsUnsaved = false
-    /// Alexa's suggestion buttons, while its newest reply is this comparison's last turn and the page could take a tap.
+    /// Expose only choices that belong to this comparison's latest reply.
     public func actionsForComparison(_ id: UUID) -> WebPageActions? {
-        guard provider == .alexaShopping, let actions = snapshot.actions, !actions.labels.isEmpty, snapshot.ready, !loading, !isSending,
+        guard provider.isShoppingWebsite, let actions = snapshot.actions, !actions.labels.isEmpty, snapshot.ready, !loading, !isSending,
               !state.attempts.contains(where: { $0.comparisonID == id && [.attempting, .uncertain].contains($0.status) }),
-              messagesForComparison(id).last?.id == actions.messageID else { return nil }
+              let latest = messagesForComparison(id).last?.id, latest == snapshot.messages.last?.id,
+              messagesForComparison(id).contains(where: { $0.id == actions.messageID }) else { return nil }
         return actions
+    }
+    public var suggestedPrompts: [String]? {
+        guard provider == .sparky, isEnabled, snapshot.ready, !snapshot.hasDraft, !loading, !isSending,
+              let prompts = snapshot.suggestedPrompts, !prompts.isEmpty else { return nil }
+        return prompts
     }
     private var sharesPage: Bool { (provider == .dots || provider.sharesOneConversation) && !provider.usesNativeConversation }
     /// The shared page can reload without earlier comparisons' turns, so keep what it has shown.
     /// Saving waits for the page to settle rather than writing on every streamed update.
     private func rememberSharedTurns() {
         guard sharesPage, !shuttingDown else { return }
-        let live = Self.comparisonTurns(snapshot.messages, attempts: state.attempts)
+        let live = Self.comparisonTurns(snapshot.messages, attempts: transcriptAttempts)
         let kept = Self.keepingSharedTurns(state.sharedTurns, live: live, onPage: Set(snapshot.messages.map(\.id)))
         guard kept != state.sharedTurns else { return }
         state.sharedTurns = kept
@@ -1160,7 +1169,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                      onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void = {},
                      plannedAttemptID: UUID? = nil, consumePrivateDraft: Bool = true, action: String? = nil) async -> WebSendAttempt? {
         defer { onSubmissionFinished() }
-        guard plannedAttemptID == nil || provider.desktopApp != nil, action == nil || provider == .alexaShopping else { return nil }
+        guard plannedAttemptID == nil || provider.desktopApp != nil, action == nil || provider.isShoppingWebsite else { return nil }
         if provider == .grokbot { return await sendGrokBot(text, comparisonID: comparisonID, consumePrivateDraft: consumePrivateDraft) }
         if provider.personalAgentProvider != nil || provider.desktopApp != nil { return await sendNative(text, comparisonID: comparisonID, onSubmissionFinished: onSubmissionFinished, onConfirmedSubmission: onConfirmedSubmission, plannedAttemptID: plannedAttemptID, consumePrivateDraft: consumePrivateDraft) }
         guard isEnabled, !isSending, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
@@ -1211,9 +1220,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 throw WebSessionFailure.notSent("Could not establish the conversation before sending.")
             }
             let baseline = try JSONDecoder().decode([WebPageMessage].self, from: JSONSerialization.data(withJSONObject: messages))
+            let cartAction = provider == .sparky && action != nil
             let existingPaths = Set(paths)
-            attempt.receiptContext = WebReceiptContext(originalURL: provider.isShoppingWebsite ? provider.homeURL : url, baseline: baseline, existingPaths: existingPaths)
-            receiptGenerations[attempt.id] = WebReceiptGeneration(page: currentPage(), generation: generation)
+            if !cartAction {
+                attempt.receiptContext = WebReceiptContext(originalURL: provider.isShoppingWebsite ? provider.homeURL : url, baseline: baseline, existingPaths: existingPaths)
+                receiptGenerations[attempt.id] = WebReceiptGeneration(page: currentPage(), generation: generation)
+            }
             let preparedDraft = preparation?["preparedDraft"] as? String ?? text
             try await waitBeforeClick(preparedDraft, expectedURL: expectedURL, generation: generation, action: action)
             guard generation == navigationGeneration, !loading else { throw WebSessionFailure.notSent("\(provider.name) navigated before submission. Review its draft.") }
@@ -1226,6 +1238,14 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 throw WebSessionFailure.notSent(result?["reason"] as? String ?? "\(provider.name)’s Send control was not clicked.")
             }
             guard result?["clicked"] as? Bool == true else { throw WebSessionFailure.unconfirmed }
+            if cartAction {
+                let added = result?["added"] as? Bool == true && generation == navigationGeneration
+                attempt.status = added ? .observed : .uncertain
+                attempt.detail = added ? "Walmart showed the item in your cart." : "Add was clicked. Check the item in your Walmart cart before taking another action."
+                try store(attempt)
+                await refresh()
+                return attempt
+            }
             for _ in 0..<20 {
                 try await Task.sleep(for: .milliseconds(250))
                 await refresh()

@@ -316,10 +316,12 @@ public struct WebPageMessage: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
-/// The suggestion buttons Alexa shows under its newest reply, by label.
+/// Choices offered on a shopping reply, with an optional revision for changing product cards.
 public struct WebPageActions: Codable, Equatable, Sendable {
     public var messageID: String
     public var labels: [String]
+    var revision: String?
+    public var offerID: String { revision ?? messageID }
     public init(messageID: String, labels: [String]) { self.messageID = messageID; self.labels = labels }
 }
 
@@ -335,7 +337,8 @@ public struct WebPageSnapshot: Decodable, Equatable, Sendable {
     public var messages: [WebPageMessage] = []
     public var submissionInterrupted: Bool?
     public var signedOut: Bool?
-    /// Alexa only; nil on every other page.
+    /// Present when a shopping reply has actionable controls.
+    public var suggestedPrompts: [String]?
     public var actions: WebPageActions?
     public init() {}
 }

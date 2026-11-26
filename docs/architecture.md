@@ -172,7 +172,11 @@ attempt remains unresolved when its original document can no longer be verified.
 Walmart Shopping Agent opens Walmart’s homepage in a separate website profile. Sign in
 and open **Ask Sparky**. Shared questions use the **Message Sparky** field.
 msgblast reads the chat’s sent and received turns and includes Walmart product
-links in the transcript. Comparisons share the open Walmart chat. If Walmart
+links in the transcript. Product comparisons group each item’s price and attributes
+under its name. The iPhone composer and MCP agent list expose starter questions
+from the open welcome screen. Each available Add to cart button belongs to a
+specific reply and product. A cart receipt records whether Walmart showed the
+quantity change. Comparisons share the open Walmart chat. If Walmart
 opens a fresh chat, a follow-up requires the original turn to be visible again
 or a new comparison. An uncertain submission keeps its original receipt.
 
