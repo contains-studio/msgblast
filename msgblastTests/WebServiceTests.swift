@@ -48,6 +48,11 @@ final class WebServiceTests: XCTestCase {
         XCTAssertNil(session.suggestedPrompts)
         let offer = try XCTUnwrap(session.actionsForComparison(comparison))
         let productReply = try XCTUnwrap(session.messagesForComparison(comparison).last)
+        let products = try XCTUnwrap(productReply.products)
+        XCTAssertEqual(products.map(\.name), ["Steel bottle", "Plastic bottle", "Glass bottle"])
+        XCTAssertEqual(products.compactMap(\.imageURL).count, 2)
+        XCTAssertNotEqual(products[0].imageURL, products[1].imageURL)
+        XCTAssertNil(products[2].imageURL)
         let text = productReply.text
         XCTAssertTrue(text.contains("lighter.\nCompare sizes below."))
         let legacy = WebPageMessage(id: productReply.id, role: "assistant", text: String(repeating: "Old flattened product card ", count: 40))

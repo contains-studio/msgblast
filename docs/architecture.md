@@ -173,7 +173,7 @@ Walmart Shopping Agent opens Walmart’s homepage in a separate website profile.
 and open **Ask Sparky**. Shared questions use the **Message Sparky** field.
 msgblast reads the chat’s sent and received turns and includes Walmart product
 links in the transcript. Product comparisons group each item’s price and attributes
-under its name. The iPhone composer and MCP agent list expose starter questions
+under its name. On iPhone, each product’s photo downloads through the Mac’s image cache and appears with that product’s Add button. MCP comparison reads expose labeled product and photo URLs. The iPhone composer and MCP agent list expose starter questions
 from the open welcome screen. Each available Add to cart button belongs to a
 specific reply and product. A cart receipt records whether Walmart showed the
 quantity change. Comparisons share the open Walmart chat. If Walmart

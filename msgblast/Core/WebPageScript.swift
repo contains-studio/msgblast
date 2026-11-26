@@ -113,6 +113,18 @@ struct WebPageScript {
             const label=e.querySelector(':scope > div > span.clip')?.textContent.trim();
             return label==='Sent message,' ? 'user' : label==='Received message,' ? 'assistant' : null;
         };
+        const sparkyPhoto = (card,name) => {
+            const candidates=new Set();
+            for (const img of card?.querySelectorAll('img') || []) {
+                const src=img.currentSrc || img.src;
+                if (!src) continue;
+                const photo=new URL(src,location.href);
+                if (photo.origin!=='https://i5.walmartimages.com' || photo.username || photo.password || !/^\/(asr|seo)\//.test(photo.pathname)) continue;
+                if (normalized(img.alt)===name) return photo.href;
+                candidates.add(photo.href);
+            }
+            return candidates.size===1 ? [...candidates][0] : undefined;
+        };
         const sparkyMessage = e => {
             const role=sparkyRole(e),id=e.getAttribute('data-testid');
             if (!role) return [];
@@ -139,15 +151,8 @@ struct WebPageScript {
                     lines.push(productURL);
                     const text=lines.join('\n'), cards=liveCards.filter(card=>card.getAttribute('data-item-id')===itemID);
                     const card=cards.length===1 ? cards[0] : null;
-                    const img=card?.querySelector('img');
-                    const src=img?.currentSrc || img?.src;
-                    let imageURL;
-                    if (src) {
-                        const photo=new URL(src,location.href);
-                        if (photo.origin==='https://i5.walmartimages.com' && !photo.username && !photo.password && /^\/(asr|seo)\//.test(photo.pathname)) imageURL=photo.href;
-                    }
                     const action=card?.querySelector('button[data-automation-id="add-to-cart"]')?.getAttribute('aria-label');
-                    productCards.push({name,url:productURL,text,imageURL,action});
+                    productCards.push({name,url:productURL,text,imageURL:sparkyPhoto(card,name),action});
                     return [text];
                 });
                 if (products.length) table.replaceWith('\n\n'+products.join('\n\n')+'\n\n');
@@ -591,14 +596,19 @@ struct WebPageScript {
                 const note=document.createElement('div');note.textContent='Compare sizes below.';reply.append(note);
                 const comparison=document.createElement('div');comparison.dataset.testid='product-comparison-table';
                 const table=document.createElement('table'),header=table.insertRow();header.insertCell();
-                for (const [name,id] of [['Steel bottle','123456'],['Plastic bottle','234567']]) {
+                for (const [name,id,photo] of [['Steel bottle','123456','https://i5.walmartimages.com/seo/Ello-Flip-Fill-32-oz-Stainless-Steel-Water-Bottle-Lavendar_fc9a14dd-82ad-4772-9eb7-a0c22e549a94.4701e8e002c00df04887224613f480b4.jpeg?odnHeight=208&odnWidth=208&odnBg=FFFFFF'],['Plastic bottle','234567','https://i5.walmartimages.com/seo/Athletic-Works-Shaker-Bottle-Gray-24oz_a5217945-e39a-4670-bee1-02d480782840.126984729927113f1c3fc2e3447d2f9e.jpeg?odnHeight=208&odnWidth=208&odnBg=FFFFFF'],['Glass bottle','345678',null]]) {
                     const card=document.createElement('div');card.setAttribute('role','group');card.dataset.itemId=id;
                     const link=document.createElement('a');link.href='/ip/Fixture-bottle/'+id;link.textContent=name;
                     const add=document.createElement('button');add.dataset.automationId='add-to-cart';add.setAttribute('aria-label','Add to cart - '+name);add.textContent='Add';
                     add.onclick=()=>{add.removeAttribute('data-automation-id');add.setAttribute('aria-label','Decrease quantity for '+name);add.textContent='1 in cart'};
-                    card.append(link,add);header.insertCell().append(card);
+                    card.append(link);
+                    if (photo) {
+                        const image=document.createElement('img');image.alt=name;image.src=photo;
+                        card.append(image,add);
+                    }
+                    header.insertCell().append(card);
                 }
-                for (const values of [['Price','$14.96','$13.88'],['Size','26 oz','32 oz']]) {
+                for (const values of [['Price','$14.96','$13.88','$11.00'],['Size','26 oz','32 oz','18 oz']]) {
                     const row=table.insertRow();for (const value of values) row.insertCell().textContent=value;
                 }
                 comparison.append(table);reply.append(comparison);},200);

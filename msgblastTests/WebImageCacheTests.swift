@@ -77,6 +77,19 @@ final class WebImageCacheTests: XCTestCase {
         XCTAssertEqual(kept, cdn)
     }
 
+    func testWalmartPhotosRequireTheProductCDNAndStayThereOnRedirect() async throws {
+        let product = "https://i5.walmartimages.com/asr/bottle.jpg"
+        XCTAssertNotNil(WebImageURL.walmart(product))
+        for other in ["https://i5.walmartimages.com/logo.svg", "https://i5.walmartimages.com.example.org/asr/item.jpg", "http://i5.walmartimages.com/asr/item.jpg"] {
+            XCTAssertNil(WebImageURL.walmart(other))
+        }
+        let source = try XCTUnwrap(URL(string: product))
+        let redirect = try XCTUnwrap(HTTPURLResponse(url: source, statusCode: 302, httpVersion: nil, headerFields: nil))
+        let target = URLRequest(url: try XCTUnwrap(URL(string: "https://m.media-amazon.com/images/I/other.jpg")))
+        let result = await WebImageRedirectGuard().urlSession(.shared, task: URLSession.shared.dataTask(with: source), willPerformHTTPRedirection: redirect, newRequest: target)
+        XCTAssertNil(result)
+    }
+
     func testCachesAValidImageByURLHash() async throws {
         WebImageProtocol.reset()
         let directory = directory()

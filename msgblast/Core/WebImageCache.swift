@@ -144,10 +144,11 @@ public final class WebImageCache {
     }
 }
 
-/// Drops a redirect that leaves the Amazon image allowlist. The redirect body is then rejected as a non-image.
+/// Drops a redirect that leaves the shopping image allowlist. The redirect body is then rejected as a non-image.
 final class WebImageRedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest) async -> URLRequest? {
-        guard let raw = request.url?.absoluteString, WebImageURL.allowed(raw) != nil else { return nil }
+        guard let raw = request.url?.absoluteString, let source = response.url?.absoluteString, WebImageURL.allowed(raw) != nil,
+              (WebImageURL.walmart(source) != nil) == (WebImageURL.walmart(raw) != nil) else { return nil }
         return request
     }
 }
