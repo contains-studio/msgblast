@@ -110,13 +110,18 @@ final class WantsTests: XCTestCase {
                                         "item": ["id": "itm_1", "text": "Headphones"],
                                         "comment": ["id": "cmt_1", "list_id": "lst_1", "target_type": "item", "target_id": "itm_1", "url": "https://wantmcp.com/l/lst_1#cmt_1",
                                                     "author": ["kind": "user", "handle": "bright-fox-1180"], "body": "Folds flat?", "created_at": "2026-11-27T08:00:00Z"]]
-            return self.reply(["events": [["eventId": "42", "name": "comment.created", "timestamp": "2026-11-27T08:00:00Z", "data": event]],
+            return self.reply(["events": [["data": "unknown"], ["eventId": "42", "name": "comment.created", "timestamp": "2026-11-27T08:00:00Z", "data": event]],
                                "cursor": "42", "hasMore": false, "nextPollMs": 15000], to: request)
         }
         let page = try await client().poll("comment.created", cursor: "41")
         XCTAssertEqual(page.cursor, "42")
         XCTAssertEqual(page.nextPoll, 15)
+        XCTAssertEqual(page.events.count, 1)
         XCTAssertEqual(page.events.first?.comment?.body, "Folds flat?")
+        WantStub.handler = { self.reply(["events": [["data": ["type": "future"]]], "cursor": "43"], to: $0) }
+        let unknown = try await client().poll("list.activity", cursor: "42")
+        XCTAssertTrue(unknown.hasActivity && unknown.events.isEmpty)
+        XCTAssertEqual(unknown.cursor, "43")
     }
 
     func testFindOffersPromptLinksTheItemAndWorksWithoutAConnection() throws {
@@ -206,6 +211,11 @@ final class WantsTests: XCTestCase {
         XCTAssertNil(WantCredential.restore(data, for: URL(string: "https://different.test/mcp")!))
         XCTAssertFalse(WantMCPClient.allowsEndpoint(URL(string: "http://example.com/mcp")!))
         XCTAssertTrue(WantMCPClient.allowsEndpoint(URL(string: "http://127.0.0.1:8787/mcp")!))
+    }
+
+    func testOnlyWebLinksCanOpen() {
+        for link in ["file:///tmp/item", "custom:open", "/relative", "https://"] { XCTAssertNil(WantJSON.webURL(link)) }
+        XCTAssertEqual(WantJSON.webURL("https://shop.example/item")?.host, "shop.example")
     }
 
     func testWriteKeyValidation() {

@@ -85,6 +85,7 @@ private struct WantsListColumn: View {
     @ObservedObject var wants: WantsModel
     @Binding var selection: String?
     @State private var draft = ""
+    @State private var adding = false
     @State private var listID: String?
 
     var body: some View {
@@ -108,7 +109,7 @@ private struct WantsListColumn: View {
             Divider()
             HStack {
                 TextField("Add a \(target?.kind.item.lowercased() ?? "want")", text: $draft).textFieldStyle(.roundedBorder).onSubmit(add)
-                Button(action: add) { Image(systemName: "plus") }.disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty || target == nil)
+                Button(action: add) { Image(systemName: "plus") }.disabled(adding || draft.trimmingCharacters(in: .whitespaces).isEmpty || target == nil)
                     .accessibilityLabel("Add Want")
                 if wants.lists.count > 1 {
                     Menu {
@@ -121,10 +122,13 @@ private struct WantsListColumn: View {
 
     private var target: WantList? { wants.lists.first { $0.id == listID } ?? wants.lists.first }
     private func add() {
-        guard let target else { return }
+        guard !adding, let target else { return }
         let text = draft
-        draft = ""
-        Task { await wants.addItem(text, to: target) }
+        adding = true
+        Task {
+            if await wants.addItem(text, to: target), draft == text { draft = "" }
+            adding = false
+        }
     }
     private func progress(_ item: WantItem, _ format: WantFormat) -> String {
         if item.status == "done" { return format.finished }
@@ -151,7 +155,7 @@ private struct WantItemDetail: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(item.text).font(.title2.bold()).textSelection(.enabled)
                         HStack(spacing: 8) {
-                            if let url = URL(string: list.url(for: item)), ["http", "https"].contains(url.scheme) { Link(list.title, destination: url) } else { Text(list.title) }
+                            if let url = WantJSON.webURL(list.url(for: item)) { Link(list.title, destination: url) } else { Text(list.title) }
                             if list.isPrivate { Label("Private", systemImage: "lock").foregroundStyle(.secondary) }
                             if let status { Text(status).foregroundStyle(.secondary) }
                         }.font(.callout)
@@ -187,7 +191,6 @@ private struct WantItemDetail: View {
         }
     }
 
-    /// "In progress · Claude" or "Done", from the item's status and who claimed it.
     private var status: String? {
         switch item.status {
         case "in_progress": (["In progress"] + (item.claimedBy.map { [$0.label] } ?? [])).joined(separator: " · ")
@@ -212,12 +215,14 @@ private struct WantItemDetail: View {
                     .textFieldStyle(.roundedBorder).onSubmit { send(question) }
                 Button("Answer") { send(question) }.disabled((answers[question.id] ?? "").trimmingCharacters(in: .whitespaces).isEmpty)
             }
-        }.padding(14).background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        }.disabled(wants.answering.contains(question.id)).padding(14).background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private func send(_ question: WantQuestion) {
-        guard let text = answers.removeValue(forKey: question.id) else { return }
-        Task { await wants.answer(question, with: text) }
+        guard let text = answers[question.id] else { return }
+        Task {
+            if await wants.answer(question, with: text), answers[question.id] == text { answers[question.id] = nil }
+        }
     }
 
     private func repliesSection(_ id: UUID, _ turns: [AgentControlTurn]) -> some View {
@@ -251,14 +256,14 @@ private struct WantEntryRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             if entry.productUrl != nil {
-                AsyncImage(url: entry.status == "listed" ? entry.imageUrl.flatMap(URL.init(string:)) : nil) { image in
+                AsyncImage(url: entry.status == "listed" ? WantJSON.webURL(entry.imageUrl) : nil) { image in
                     image.resizable().scaledToFit()
                 } placeholder: {
                     Image(systemName: "shippingbox").font(.title2).foregroundStyle(.tertiary)
                 }.frame(width: 64, height: 64).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
             }
             VStack(alignment: .leading, spacing: 3) {
-                if entry.status == "listed", let url = entry.link.flatMap(URL.init(string:)) {
+                if entry.status == "listed", let url = WantJSON.webURL(entry.link) {
                     Link(entry.title, destination: url).font(.body.weight(.semibold))
                 } else {
                     // Outside suggestions are untrusted: shown as plain text, never as links.
@@ -281,7 +286,6 @@ private struct WantEntryRow: View {
     }
 }
 
-/// Who posted something and when. The person's own agents are highlighted, as on wantmcp.com.
 private func byline(_ actor: WantActor, _ date: Date) -> some View {
     HStack(spacing: 4) {
         if actor.isAgent { Image(systemName: "sparkles").foregroundStyle(.tint) }
@@ -333,7 +337,7 @@ private struct WantsConnectButton: View {
             .popover(isPresented: $showing, arrowEdge: .bottom) {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Connect your agents").font(.headline)
-                    Text("Each agent needs its own connection to post to your lists. Agents that aren't connected reply in msgblast instead.")
+                    Text("Each agent needs its own connection to post to your lists.")
                         .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     row("MCP server URL", url)
                     Text("ChatGPT and Claude: Settings → Connectors → Add custom connector, then paste the server URL.")

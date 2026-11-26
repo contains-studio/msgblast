@@ -9,7 +9,6 @@ import msgblastRemoteProtocol
 /// that ask their agents for offers. Sends run through the same executor as outside agents and
 /// the phone, so they get every readiness and duplicate-send check and are never retried.
 @MainActor final class WantsModel: ObservableObject {
-    /// What msgblast remembers between launches, in `wants.json` beside `state.json`.
     struct Saved: Codable, Equatable {
         struct Blast: Codable, Equatable {
             var comparisonID: UUID?
@@ -44,7 +43,7 @@ import msgblastRemoteProtocol
     @Published private(set) var entries: [String: [WantEntry]] = [:]
     @Published private(set) var saved = Saved()
     @Published private(set) var signingIn = false
-    /// Sends in flight; a background forward and a blast can overlap.
+    @Published private(set) var answering: Set<String> = []
     @Published private(set) var sendsInFlight = 0
     var sending: Bool { sendsInFlight > 0 }
     @Published var error: String?
@@ -56,6 +55,7 @@ import msgblastRemoteProtocol
     private var credential: WantCredential?
     private var service: WantService!
     private var poller: Task<Void, Never>?
+    private var latestReload = UUID()
     private var reloadPending = false
     /// Bumped on sign-out so requests still in flight from the old sign-in are discarded.
     private var session = 0
@@ -91,7 +91,6 @@ import msgblastRemoteProtocol
         }
     }
 
-    /// Loads the lists and starts the event feed. Called at launch; does nothing while signed out.
     func start() {
         guard signedIn, poller == nil else { return }
         poller = Task { [weak self] in
@@ -105,6 +104,8 @@ import msgblastRemoteProtocol
 
     @discardableResult func reload() async -> Bool {
         guard signedIn, let service else { return false }
+        let reloadID = UUID()
+        latestReload = reloadID
         let session = self.session
         do {
             var loaded: [WantList] = [], loadedComments: [String: [WantComment]] = [:], loadedSuggestions: [String: [WantEntry]] = [:]
@@ -116,7 +117,7 @@ import msgblastRemoteProtocol
             }
             let visible = Set(loaded.flatMap { ($0.items ?? []).map(\.id) })
             for id in entries.keys where visible.contains(id) { loadedEntries[id] = try await service.entries(itemID: id) }
-            guard session == self.session else { return false }
+            guard session == self.session, latestReload == reloadID else { return false }
             lists = loaded
             comments = loadedComments
             suggestions = loadedSuggestions
@@ -124,7 +125,7 @@ import msgblastRemoteProtocol
             reloadPending = false
             return true
         } catch {
-            if session == self.session { reloadPending = true; fail(error) }
+            if session == self.session, latestReload == reloadID { reloadPending = true; fail(error) }
             return false
         }
     }
@@ -185,7 +186,7 @@ import msgblastRemoteProtocol
         poller?.cancel(); poller = nil; session += 1
         refreshing?.cancel(); refreshing = nil
         if !app.demo, !keychain.delete() { error = "Signed out on this Mac. The Keychain could not remove the saved key." }
-        credential = nil; reloadPending = false
+        credential = nil; reloadPending = false; answering = []
         signedIn = false; lists = []; comments = [:]; suggestions = [:]; entries = [:]
         update { $0 = Saved() }
         saved = Saved()
@@ -252,18 +253,18 @@ import msgblastRemoteProtocol
 
     // MARK: Items and blasts
 
-    func addItem(_ text: String, to list: WantList) async {
+    func addItem(_ text: String, to list: WantList) async -> Bool {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty, signedIn, let service else { return false }
         let generation = session
-        let service = self.service!
-        do {
-            _ = try await service.addItem(listID: list.id, text: text)
-            guard generation == session else { return }
-            let refreshed = try await service.list(list.id)
-            guard generation == session, let index = lists.firstIndex(where: { $0.id == list.id }) else { return }
-            lists[index] = refreshed
-        } catch { if generation == session { fail(error) } }
+        do { _ = try await service.addItem(listID: list.id, text: text) }
+        catch {
+            if generation == session { fail(error) }
+            return false
+        }
+        guard generation == session else { return false }
+        await reload()
+        return true
     }
 
     /// Agents msgblast can send to, by their `msgblast_agents_list` id.
@@ -271,22 +272,31 @@ import msgblastRemoteProtocol
         app.controlAgents().filter { $0.kind != "report" && $0.visible && AgentControlSend.remoteID($0.id) != nil }
     }
 
-    func answer(_ question: WantQuestion, with text: String) async {
+    @discardableResult func answer(_ question: WantQuestion, with text: String) async -> Bool {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard signedIn, !text.isEmpty, answering.insert(question.id).inserted else { return false }
         let generation = session
+        defer { if generation == session { answering.remove(question.id) } }
         do {
             try await service.answer(questionID: question.id, text: text)
-            if generation == session { await reload() }
-        } catch { if generation == session { fail(error) } }
+            guard generation == session else { return false }
+            await reload()
+            return true
+        } catch {
+            if generation == session { fail(error) }
+            return false
+        }
     }
 
     /// Sends the item to the chosen agents in a new conversation and remembers it for the item.
     func blast(_ item: WantItem, in list: WantList, to agentIDs: [String]) async {
+        guard signedIn, !sending else { return }
+        sendsInFlight += 1
+        defer { sendsInFlight -= 1 }
         let generation = session
         if entries[item.id] == nil { await loadEntries(item) }
-        guard generation == session, signedIn, entries[item.id] != nil else { return }
-        let prompt = WantPrompt.ask(item: item, list: list, posted: entries[item.id] ?? item.entries ?? [])
+        guard generation == session, let posted = entries[item.id] else { return }
+        let prompt = WantPrompt.ask(item: item, list: list, posted: posted)
         guard let result = await send(.createConversation(text: prompt, agentIDs: agentIDs.compactMap(AgentControlSend.remoteID), attachmentIDs: [])), generation == session else { return }
         update { $0.blasts[item.id] = .init(comparisonID: result.conversationID, agents: agentIDs) }
     }
@@ -300,8 +310,6 @@ import msgblastRemoteProtocol
     func openConversation(_ id: UUID) { app.coordinator?.open(id) }
 
     private func send(_ action: RemoteAction) async -> RemoteCommandResult? {
-        sendsInFlight += 1
-        defer { sendsInFlight -= 1 }
         let generation = session
         let result = await sends.send(RemoteCommand(action: action), client: "Wants") { self.signedIn && self.session == generation }
         guard session == generation else { return nil }
@@ -325,7 +333,7 @@ import msgblastRemoteProtocol
                 let page = try await service.poll(Self.activity, cursor: cursor)
                 guard session == self.session else { return delay }
                 cursor = page.cursor
-                changed = changed || !page.events.isEmpty
+                changed = changed || page.hasActivity
                 delay = max(page.nextPoll ?? delay, 5)
                 if !page.hasMore { break }
             }
@@ -335,7 +343,7 @@ import msgblastRemoteProtocol
         }
         if changed, !(await reload()) { return 60 }
         guard session == self.session else { return delay }
-        update { $0.cursors[Self.activity] = cursor }
+        if !update({ $0.cursors[Self.activity] = cursor }) { reloadPending = true }
         return delay
     }
 
@@ -352,7 +360,7 @@ import msgblastRemoteProtocol
         var next = saved
         change(&next)
         guard next != saved else { return true }
-        guard canSave else { return false }
+        guard canSave else { error = "Wants settings could not be read. The existing file has been preserved."; return false }
         do {
             try JSONEncoder().encode(next).write(to: fileURL, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
