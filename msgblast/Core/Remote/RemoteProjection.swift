@@ -183,11 +183,16 @@ public enum RemoteProjectionBuilder {
             // Native transcripts carry stable ids. Website DOM ids may be synthetic, so a
             // website turn is keyed by its position; a re-render or a growing reply is an update.
             for (ordinal, row) in webRows(input, comparison: cid, agent: agent).enumerated() {
-                let offered = input.webActions[cid]?[agent].flatMap { $0.messageID == row.message.id ? $0 : nil }
-                let choices = offered?.labels.filter { row.product == nil || row.product?.action == $0 }
+                let offered = input.webActions[cid]?[agent]
+                let choices: [String]?
+                if let product = row.product {
+                    choices = offered?.label(for: product, in: row.message.id).map { [$0] }
+                } else {
+                    choices = row.isProse ? nil : offered?.labels(for: row.message.id)
+                }
                 turns.append(RemoteTurn(id: row.id, conversationID: cid, agentID: agent.id, role: role(row.message.role), origin: .agentTranscript,
                                         text: row.text, created: nil, ordinal: ordinal, attachments: refs(row.files), contentHash: hash(row.text),
-                                        actions: row.isProse ? nil : choices, actionsID: offered?.offerID))
+                                        actions: choices, actionsID: choices == nil ? nil : offered?.offerID))
             }
             for attempt in input.webAttempts[cid]?[agent] ?? [] {
                 conversationAttempts.append(RemoteAttempt(id: "wa:\(attempt.id.uuidString)", conversationID: cid, agentID: agent.id, text: attempt.text,

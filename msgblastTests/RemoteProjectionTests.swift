@@ -146,12 +146,17 @@ final class RemoteProjectionTests: XCTestCase {
         let products = ["Steel", "Plastic", "Glass"].enumerated().map { index, name in
             WebShoppingProduct(name: name, url: "https://www.walmart.com/ip/\(index)", text: "\(name) bottle",
                                imageURL: index < 2 ? "https://i5.walmartimages.com/asr/\(index).jpeg" : nil,
-                               action: "Add to cart - \(name)")
+                               action: index == 2 ? "Add to cart - Steel" : "Add to cart - \(name)")
         }
         var reply = WebPageMessage(id: "table", role: "assistant", text: (["Compare these bottles."] + products.map(\.text)).joined(separator: "\n\n"))
         reply.products = products
         input.webHistories = [comparison.id: [walmart: [reply]]]
-        input.webActions = [comparison.id: [walmart: WebPageActions(messageID: reply.id, labels: ["Add to cart - Steel", "Add to cart - Plastic"])]]
+        var offered = WebPageActions(messageID: "later-reply", labels: ["Add to cart - Steel", "Add to cart - Plastic"])
+        offered.cartChoices = [
+            .init(itemID: "0", messageID: reply.id, label: offered.labels[0]),
+            .init(itemID: "1", messageID: reply.id, label: offered.labels[1])
+        ]
+        input.webActions = [comparison.id: [walmart: offered]]
         let files = products.prefix(2).map { MessageAttachment(id: $0.name, filename: "product.jpg", path: "/tmp/\($0.name).jpg", mimeType: "image/jpeg") }
         for index in [1, 0] {
             input.webImages[try XCTUnwrap(products[index].imageURL)] = files[index]

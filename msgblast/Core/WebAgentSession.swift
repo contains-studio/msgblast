@@ -47,7 +47,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         // Desktop apps share a conversation too, but their history is native and kept per comparison.
         if sharesPage {
             // The saved copy already merges everything the page has shown for this comparison.
-            return state.sharedTurns[id.uuidString] ?? Self.comparisonTurns(snapshot.messages, attempts: transcriptAttempts)[id] ?? []
+            return state.sharedTurns[id.uuidString] ?? Self.comparisonTurns(snapshot.messages, attempts: transcriptAttempts, allowTextFallback: provider != .sparky)[id] ?? []
         }
         if state.comparisonID == id { return snapshot.messages }
         return pages[id.uuidString]?.snapshot.messages ?? state.localConversations[id.uuidString] ?? []
@@ -75,7 +75,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     /// Saving waits for the page to settle rather than writing on every streamed update.
     private func rememberSharedTurns() {
         guard sharesPage, !shuttingDown else { return }
-        let live = Self.comparisonTurns(snapshot.messages, attempts: transcriptAttempts)
+        let live = Self.comparisonTurns(snapshot.messages, attempts: transcriptAttempts, allowTextFallback: provider != .sparky)
         let kept = Self.keepingSharedTurns(state.sharedTurns, live: live, onPage: Set(snapshot.messages.map(\.id)))
         guard kept != state.sharedTurns else { return }
         state.sharedTurns = kept
@@ -132,7 +132,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     /// Splits a shared page by request: each request a comparison sent owns its user message and the
     /// replies up to the next user message. Turns from before any request, or from requests sent
     /// elsewhere, belong to no comparison; a comparison that has sent nothing has no turns.
-    static func comparisonTurns(_ messages: [WebPageMessage], attempts: [WebSendAttempt]) -> [UUID: [WebPageMessage]] {
+    static func comparisonTurns(_ messages: [WebPageMessage], attempts: [WebSendAttempt], allowTextFallback: Bool = true) -> [UUID: [WebPageMessage]] {
         let userIndexes = messages.indices.filter { messages[$0].role == "user" }
         let indexByID = Dictionary(userIndexes.map { (messages[$0].id, $0) }, uniquingKeysWith: { first, _ in first })
         let texts = messages.map { normalized($0.text) }
@@ -142,7 +142,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         for attempt in sent { if let id = attempt.messageID, let index = indexByID[id] { owner[index] = attempt.comparisonID } }
         // An unattributed request takes the nearest unowned matching message after the previous request.
         var previous = -1
-        for attempt in sent {
+        for attempt in sent where allowTextFallback {
             if let id = attempt.messageID, let index = indexByID[id] { previous = index; continue }
             // Messages already on the page when it was submitted are never its own.
             let text = normalized(attempt.text), earliest = max(previous + 1, attempt.receiptContext?.baseline.count ?? 0)

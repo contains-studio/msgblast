@@ -48,12 +48,12 @@ extension AppModel: AgentControlHost {
             guard let session = webAgents.sessions.first(where: { $0.id == id }) else { return [] }
             let offered = comparison.endedAt == nil ? session.actionsForComparison(comparison.id) : nil
             return session.messagesForComparison(comparison.id).map { message in
-                let offer = offered.flatMap { $0.messageID == message.id ? $0 : nil }
+                let labels = offered?.labels(for: message.id)
                 var turn = AgentControlTurn(agent: session.name, outgoing: message.role == "user", text: message.text, date: nil,
-                                            actions: offer?.labels, actionsId: offer?.offerID)
+                                            actions: labels, actionsId: labels == nil ? nil : offered?.offerID)
                 turn.products = message.products?.map { product in
                     var current = product
-                    current.action = product.action.flatMap { offer?.labels.contains($0) == true ? $0 : nil }
+                    current.action = offered?.label(for: product, in: message.id)
                     return current
                 }
                 return turn

@@ -341,6 +341,21 @@ public struct WebPageMessage: Codable, Equatable, Identifiable, Sendable {
 public struct WebPageActions: Codable, Equatable, Sendable {
     public var messageID: String
     public var labels: [String]
+    struct CartChoice: Codable, Equatable, Sendable {
+        var itemID: String
+        var messageID: String
+        var label: String
+    }
+    var cartChoices: [CartChoice]?
+    func label(for product: WebShoppingProduct, in reply: String) -> String? {
+        guard let id = URL(string: product.url)?.lastPathComponent else { return nil }
+        return cartChoices?.first { $0.messageID == reply && $0.itemID == id && $0.label == product.action }?.label
+    }
+    func labels(for reply: String) -> [String]? {
+        guard let cartChoices else { return messageID == reply ? labels : nil }
+        let matching = cartChoices.filter { $0.messageID == reply }.map(\.label)
+        return matching.isEmpty ? nil : matching
+    }
     var revision: String?
     public var offerID: String { revision ?? messageID }
     public init(messageID: String, labels: [String]) { self.messageID = messageID; self.labels = labels }

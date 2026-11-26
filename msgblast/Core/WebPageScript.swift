@@ -142,7 +142,7 @@ struct WebPageScript {
                     if (url.origin!==location.origin || !url.pathname.startsWith('/ip/')) return [];
                     const name=normalized(link.textContent), lines=[name];
                     const itemID=link.closest('[data-item-id]').getAttribute('data-item-id');
-                    if (!/^\d+$/.test(itemID) || url.pathname.split('/').pop()!==itemID) return [];
+                    const identified=/^\d+$/.test(itemID) && url.pathname.split('/').filter(Boolean).pop()===itemID;
                     for (const row of attributes) {
                         const name=normalized(row.cells[0]?.textContent||''), value=normalized(row.cells[column]?.textContent||'');
                         if (name && value) lines.push(name+': '+value);
@@ -150,7 +150,7 @@ struct WebPageScript {
                     const productURL=url.origin+url.pathname;
                     lines.push(productURL);
                     const text=lines.join('\n'), cards=liveCards.filter(card=>card.getAttribute('data-item-id')===itemID);
-                    const card=cards.length===1 ? cards[0] : null;
+                    const card=identified && cards.length===1 ? cards[0] : null;
                     const action=normalized(card?.querySelector('button[data-automation-id="add-to-cart"]')?.getAttribute('aria-label') || '') || undefined;
                     productCards.push({name,url:productURL,text,imageURL:sparkyPhoto(card,name),action});
                     return [text];
@@ -225,14 +225,17 @@ struct WebPageScript {
             return rows.slice(lastUser+1).filter(row=>sparkyRole(row)==='assistant').flatMap(row=>
                 [...row.querySelectorAll('[role="group"][data-item-id]')].flatMap(card=>{
                     const id=card.getAttribute('data-item-id');
-                    if (!/^\d+$/.test(id) || ![...card.querySelectorAll('a[href]')].some(a=>a.origin===location.origin && a.pathname.startsWith('/ip/') && a.pathname.split('/').pop()===id)) return [];
+                    if (!rendered(card) || !/^\d+$/.test(id) || ![...card.querySelectorAll('a[href]')].some(a=>a.origin===location.origin && a.pathname.startsWith('/ip/') && a.pathname.split('/').filter(Boolean).pop()===id)) return [];
                     return [{card,id,rowID:row.getAttribute('data-testid')}];
                 }));
         };
+        const sparkyAddButtons = card => [...card.querySelectorAll('button[data-automation-id="add-to-cart"][aria-label^="Add to cart - "]')].filter(b=>rendered(b) && !b.disabled && b.getAttribute('aria-disabled')!=='true');
+        const sparkyQuantity = card => [...card.querySelectorAll('button[aria-label]')].some(b=>rendered(b) && /^(decrease quantity|remove one|decrement quantity|remove from cart)/i.test(b.getAttribute('aria-label')));
         const sparkyOffer = () => {
             const cards=sparkyCards();
             const choices=cards.flatMap(({card,id,rowID})=>{
-                const buttons=[...card.querySelectorAll('button[data-automation-id="add-to-cart"][aria-label^="Add to cart - "]')].filter(b=>rendered(b) && !b.disabled && b.getAttribute('aria-disabled')!=='true');
+                if (cards.filter(other=>other.id===id).length!==1 || sparkyQuantity(card)) return [];
+                const buttons=sparkyAddButtons(card);
                 if (buttons.length!==1) return [];
                 const label=normalized(buttons[0].getAttribute('aria-label'));
                 return [{id,rowID,label,element:buttons[0]}];
@@ -257,7 +260,7 @@ struct WebPageScript {
         const shoppingActions = () => {
             if (config.provider==='alexaShopping') return alexaActions();
             const offer=sparkyOffer();
-            return offer ? {messageID:offer.messageID,revision:offer.revision,labels:offer.choices.map(c=>c.label)} : null;
+            return offer ? {messageID:offer.messageID,revision:offer.revision,labels:offer.choices.map(c=>c.label),cartChoices:offer.choices.map(c=>({itemID:c.id,messageID:c.rowID,label:c.label}))} : null;
         };
         const shoppingChoice = (label,offerID) => {
             if (config.provider==='alexaShopping') return alexaChip(label,offerID);
@@ -490,13 +493,13 @@ struct WebPageScript {
         if (!current.ready || current.url!==expectedURL || current.draft.trim() || observation.interrupted)
             return {clicked:false,reason:`${config.name} changed before the choice was made. Nothing was clicked.`};
         if (!chip) return {clicked:false,reason:`${config.name} no longer offers that choice.`};
-        const itemID=chip.closest('[data-item-id]')?.getAttribute('data-item-id');
+        const selected=config.provider==='sparky' ? sparkyCards().find(c=>c.card===chip.closest('[data-item-id]')) : null;
         chip.scrollIntoView({block:'nearest'}); chip.click();
         if (config.provider==='sparky') {
             for (let i=0;i<20;i++) {
                 await new Promise(resolve=>setTimeout(resolve,200));
-                const card=sparkyCards().find(c=>c.id===itemID)?.card;
-                if (card && [...card.querySelectorAll('button[aria-label]')].some(b=>rendered(b) && /^(decrease quantity|remove one|decrement quantity|remove from cart)/i.test(b.getAttribute('aria-label')))) return {clicked:true,added:true};
+                const matches=sparkyCards().filter(c=>c.id===selected?.id);
+                if (matches.length===1 && matches[0].rowID===selected.rowID && sparkyQuantity(matches[0].card) && !sparkyAddButtons(matches[0].card).length) return {clicked:true,added:true};
             }
         }
         return {clicked:true};
