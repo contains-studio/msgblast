@@ -572,9 +572,14 @@ struct WebPageScript {
         #"""
         <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
         <style>:root{color-scheme:light dark;font:16px -apple-system,sans-serif}body{padding:16px}
+        [data-testid="chat-panel"]{box-sizing:border-box;padding:14px;background:Canvas;color:CanvasText}
+        h2{margin:0 0 4px}small,time{font-size:12px;opacity:.7}time{margin-inline-start:6px}
+        #turns>div,#welcome{margin:12px 0}table{width:100%;border-collapse:collapse;table-layout:fixed}
+        td{vertical-align:top;padding:5px;overflow-wrap:anywhere}td:first-child{width:14%}
+        [data-item-id]{display:grid;gap:4px}img{max-width:100%;height:80px;object-fit:contain}
         textarea{box-sizing:border-box;width:100%;font:inherit;padding:10px}button{font:inherit}.clip{position:absolute;clip-path:inset(100%)}</style></head>
-        <body><h2>Ask Sparky</h2><small>Local fixture · simulated Walmart conversation</small>
-        <div id="chat"><div data-testid="sparky-chat-window"><div data-testid="chat-panel">
+        <body><div id="chat"><div data-testid="sparky-chat-window"><div data-testid="chat-panel">
+        <h2>Ask Sparky</h2><small>Local fixture · simulated Walmart conversation</small>
         <div data-testid="message-container"><div data-testid="autoscroll" id="turns"></div></div>
         <div id="welcome"><button aria-label="Compare two reusable water bottles">Compare two reusable water bottles</button>
         <button aria-label="Plan a birthday party">Plan a birthday party</button></div>
@@ -584,6 +589,7 @@ struct WebPageScript {
         <script>
         const input=document.querySelector('textarea'),send=document.querySelector('[aria-label="Send Message"]');
         input.oninput=()=>send.disabled=!input.value.trim();
+        welcome.onclick=event=>{if(event.target.tagName==='BUTTON'){input.value=event.target.innerText;input.oninput();send.click()}};
         function turn(label,text) {
             const row=document.createElement('div'),body=document.createElement('div'),role=document.createElement('span');
             row.dataset.testid=crypto.randomUUID();role.className='clip';role.textContent=label;
