@@ -347,11 +347,11 @@ public struct WebPageActions: Codable, Equatable, Sendable {
         var label: String
     }
     var cartChoices: [CartChoice]?
-    func label(for product: WebShoppingProduct, in reply: String) -> String? {
+    public func label(for product: WebShoppingProduct, in reply: String) -> String? {
         guard let id = URL(string: product.url)?.lastPathComponent else { return nil }
         return cartChoices?.first { $0.messageID == reply && $0.itemID == id && $0.label == product.action }?.label
     }
-    func labels(for reply: String) -> [String]? {
+    public func labels(for reply: String) -> [String]? {
         guard let cartChoices else { return messageID == reply ? labels : nil }
         let matching = cartChoices.filter { $0.messageID == reply }.map(\.label)
         return matching.isEmpty ? nil : matching
