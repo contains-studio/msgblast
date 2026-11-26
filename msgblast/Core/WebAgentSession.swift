@@ -28,7 +28,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if provider == .alexaShopping {
             configuration.applicationNameForUserAgent = "Version/26.0 Safari/605.1.15"
         }
-        let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
+        let frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        let view = provider == .sparky ? SparkyWebView(frame: frame, configuration: configuration) : WKWebView(frame: frame, configuration: configuration)
         view.navigationDelegate = self; view.uiDelegate = self
         view.allowsBackForwardNavigationGestures = true
         return WebConversationPage(comparisonID: id, view: view)
@@ -920,13 +921,6 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         await unloadInactivePages()
     }
 
-    private func fitShoppingPage(_ view: WKWebView, at url: URL) {
-        guard provider == .sparky, view.bounds.width > 0 else { return }
-        // Keep Walmart’s desktop launcher available when the chat occupies one column.
-        let zoom = provider.isChatURL(url) ? min(1, max(320, view.bounds.width) / 900) : 1
-        if abs(view.pageZoom - zoom) > 0.001 { view.pageZoom = zoom }
-    }
-
     private func refresh(_ page: WebConversationPage) async {
         guard !shuttingDown, !flushingDrafts, !page.loading, !page.refreshing, pages[page.key] === page else { return }
         page.refreshing = true
@@ -944,7 +938,6 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             return
         }
         let generation = page.generation
-        fitShoppingPage(page.view, at: url)
         do {
             if (provider == .chatgpt || provider == .dots || provider.isShoppingWebsite) && !isSending && provider.isChatURL(url) {
                 _ = try await page.view.callAsyncJavaScript(script.configureInitialLayout, arguments: ["pageZoom": page.view.pageZoom], in: nil, contentWorld: .defaultClient)
@@ -2766,6 +2759,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard let page = page(for: webView) else { popupURL = webView.url?.absoluteString ?? ""; return }
         page.loading = false
+        (webView as? SparkyWebView)?.fitViewport()
         if let navigation = page.navigationError, page.error == navigation { page.error = nil }
         page.navigationError = nil
         publish(page)
@@ -2816,6 +2810,21 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return view
     }
     public func webViewDidClose(_ webView: WKWebView) { if webView === popup { closePopup() } }
+}
+
+@MainActor
+private final class SparkyWebView: WKWebView {
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        fitViewport()
+    }
+
+    func fitViewport() {
+        guard bounds.width > 0 else { return }
+        // Walmart removes the chat launcher below its desktop breakpoint.
+        let zoom = url.map(WebProvider.sparky.isChatURL) == true ? min(1, max(320, bounds.width) / 900) : 1
+        if abs(pageZoom - zoom) > 0.001 { pageZoom = zoom }
+    }
 }
 
 @MainActor
