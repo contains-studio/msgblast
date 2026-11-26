@@ -57,17 +57,8 @@ extension SideChatModelCheck {
         let page = await fixture.poll("comment.created", cursor: "0")
         let comment = page.events[0]
         let itemID = comment.item!.id
-        let file = model.local.url.deletingLastPathComponent().appendingPathComponent("wants.json")
-        let oldSettings = try Data(contentsOf: file)
-        try FileManager.default.removeItem(at: file)
-        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        try await checkForwardingWriteFailure(model, page: page)
         let before = model.agentSendActivity.log.entries.count
-        let savedWhileBlocked = await wants.take(page)
-        precondition(!savedWhileBlocked && model.agentSendActivity.log.entries.count == before)
-        precondition(wants.saved.cursors[WantsModel.activity] == nil)
-        try FileManager.default.removeItem(at: file)
-        try oldSettings.write(to: file)
-        try checkForwardingRevocationAfterWriteFailure(model, file: file)
         let saved = await wants.take(page)
         precondition(saved && wants.saved.blasts[itemID] == nil && wants.saved.forwardedConversations[itemID] != nil)
         let after = model.agentSendActivity.log.entries.count
@@ -91,16 +82,22 @@ extension SideChatModelCheck {
         print("PASS: Wants saves the cursor before forwarding, keeps answers with explicitly asked agents, and revokes queued sends when forwarding changes.")
     }
 
-    @MainActor static func checkForwardingRevocationAfterWriteFailure(_ model: AppModel, file: URL) throws {
+    @MainActor static func checkForwardingWriteFailure(_ model: AppModel, page: WantEventPage) async throws {
+        let wants = model.wants
+        let file = model.local.url.deletingLastPathComponent().appendingPathComponent("wants.json")
         let oldSettings = try Data(contentsOf: file)
         try FileManager.default.removeItem(at: file)
         try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
-        model.wants.setForwarding(false)
-        precondition(!model.wants.saved.forwardActivity)
+        let before = model.agentSendActivity.log.entries.count
+        let savedWhileBlocked = await wants.take(page)
+        precondition(!savedWhileBlocked && model.agentSendActivity.log.entries.count == before)
+        precondition(wants.saved.cursors[WantsModel.activity] == nil)
+        wants.setForwarding(false)
+        precondition(!wants.saved.forwardActivity)
         try FileManager.default.removeItem(at: file)
         try oldSettings.write(to: file)
         precondition(!WantsModel(app: model).saved.forwardActivity, "A stale on-disk preference must not override revoked consent")
-        model.wants.setForwarding(true)
+        wants.setForwarding(true)
         precondition(WantsModel(app: model).saved.forwardActivity, "New explicit consent must survive relaunch")
     }
 
