@@ -77,6 +77,10 @@ import msgblastRemoteProtocol
             service = WantFixture(activityDelay: 60)
         } else {
             credential = keychain.read()
+            if var existing = credential, existing.grantID == nil {
+                existing.grantID = UUID()
+                if keychain.save(existing) { credential = existing }
+            }
             if credential?.grantID == nil || saved.grantID != credential?.grantID {
                 saved = Saved()
                 saved.grantID = credential?.grantID
@@ -206,7 +210,11 @@ import msgblastRemoteProtocol
     private func token(for generation: Int) async throws -> String {
         guard generation == session, let credential else { throw CancellationError() }
         guard let expiry = credential.expiresAt, expiry < Date().addingTimeInterval(60), credential.refreshToken != nil else { return credential.accessToken }
-        if let refreshing { return try await refreshing.value }
+        if let refreshing {
+            let token = try await refreshing.value
+            guard generation == session else { throw CancellationError() }
+            return token
+        }
         let task = Task {
             defer { if session == generation { refreshing = nil } }
             var next = try await WantOAuth.refresh(credential, resource: Self.endpoint)
@@ -217,7 +225,9 @@ import msgblastRemoteProtocol
             return next.accessToken
         }
         refreshing = task
-        return try await task.value
+        let token = try await task.value
+        guard generation == session else { throw CancellationError() }
+        return token
     }
 
     /// Loads an item's entries when it is opened, and again when the event feed reports changes.
