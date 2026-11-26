@@ -937,9 +937,14 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             return
         }
         let generation = page.generation
+        if provider == .sparky, !fixture, page.view.bounds.width > 0 {
+            // Walmart removes the chat launcher below its desktop breakpoint.
+            let zoom = provider.isChatURL(url) ? min(1, max(320, page.view.bounds.width) / 900) : 1
+            if abs(page.view.pageZoom - zoom) > 0.001 { page.view.pageZoom = zoom }
+        }
         do {
             if (provider == .chatgpt || provider == .dots || provider.isShoppingWebsite) && !isSending && provider.isChatURL(url) {
-                _ = try await page.view.callAsyncJavaScript(script.configureInitialLayout, arguments: [:], in: nil, contentWorld: .defaultClient)
+                _ = try await page.view.callAsyncJavaScript(script.configureInitialLayout, arguments: ["pageZoom": page.view.pageZoom], in: nil, contentWorld: .defaultClient)
                 guard generation == page.generation, !shuttingDown, !flushingDrafts else { return }
             }
             let result = try await page.view.callAsyncJavaScript(script.inspect, arguments: [:], in: nil, contentWorld: .defaultClient)

@@ -224,7 +224,15 @@ struct WebPageScript {
     var configureInitialLayout: String {
         if provider == .sparky {
             return helpers + #"""
-            if (!pathAllowed() || observation.layoutConfigured) return;
+            if (!pathAllowed()) return;
+            const panelSelector='[data-testid="sparky-chat-window"]';
+            let style=document.getElementById('msgblast-sparky-layout');
+            if (!style) {style=document.createElement('style');style.id='msgblast-sparky-layout';document.head.append(style);}
+            const css=panelSelector+'{position:fixed!important;inset:0 auto auto 0!important;transform:none!important;max-width:none!important;max-height:none!important;zoom:'+(1/pageZoom)+'!important;width:'+Math.round(innerWidth*pageZoom)+'px!important;height:'+Math.round(innerHeight*pageZoom)+'px!important}'+
+                panelSelector+' [data-testid="chat-panel"]{width:100%!important;height:100%!important;max-width:none!important;max-height:none!important}';
+            if (style.textContent!==css) style.textContent=css;
+            if (observation.viewport!==pageZoom) {observation.viewport=pageZoom;observation.layoutConfigured=false;}
+            if (observation.layoutConfigured) return;
             if (editor()) {observation.layoutConfigured=true;return;}
             const open=unique('button[aria-label="Open sparky, your AI shopping assistant" i]');
             if (open && !open.disabled) {observation.layoutConfigured=true;open.click();}
