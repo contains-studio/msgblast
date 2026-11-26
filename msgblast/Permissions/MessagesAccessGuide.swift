@@ -316,7 +316,7 @@ struct MessagesAccessRow: View {
                         }
                     } else { guide.start() }
                 }))
-                .labelsHidden().toggleStyle(PermissionSwitchStyle())
+                .toggleStyle(PermissionSwitchStyle())
                 .accessibilityLabel("Full Disk Access")
                 .accessibilityIdentifier("enable-messages-history-permission")
             }.padding(14).frame(minHeight: 72)
