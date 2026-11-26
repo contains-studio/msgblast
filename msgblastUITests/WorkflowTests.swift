@@ -178,6 +178,9 @@ final class WorkflowTests: XCTestCase {
         app.launchArguments = ["--demo", "--isolated-demo", "--contacts-access-preview"]
         app.launch()
         defer { app.terminate() }
+        let skipPermissions = app.buttons["skip-permissions"]
+        XCTAssertTrue(skipPermissions.waitForExistence(timeout: 10))
+        skipPermissions.click()
         app.buttons["Discover"].click()
         let search = app.textFields["Search Discover"]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
@@ -361,14 +364,13 @@ final class WorkflowTests: XCTestCase {
         XCTAssertTrue(report.staticTexts["3 of 3 participants · 6 responses"].exists)
         XCTAssertFalse(report.buttons["Refresh agents"].exists)
         XCTAssertFalse(report.popUpButtons["Personal agent"].exists)
-        report.menuButtons["Report actions"].click()
-        app.menuItems["Report options…"].click()
-        XCTAssertTrue(app.buttons["Refresh agents"].waitForExistence(timeout: 5))
-        report.typeKey(.escape, modifierFlags: [])
+        verifyReportOptions(in: report, app: app)
         let after = XCTAttachment(screenshot: report.screenshot())
         after.name = "Comparison report — team synthesis — simulated output"
         after.lifetime = .keepAlways; add(after)
-        // Keep the report open while continuing the source conversation.
+        // Use the comparison command to bring the source window forward.
+        openSavedComparison(prompt, in: app)
+        XCTAssertTrue(report.exists)
         let input = workspace.textViews["Universal message"]
         input.click(); input.typeText("Compare the tradeoffs too")
         workspace.buttons["Send to Cedar, Lumen, Orbit"].click()
@@ -384,6 +386,16 @@ final class WorkflowTests: XCTestCase {
         workspace.toolbars.buttons["Summarize"].click()
         XCTAssertTrue(report.waitForExistence(timeout: 5))
         XCTAssertTrue(action.waitForExistence(timeout: 10))
+    }
+
+    @MainActor
+    private func verifyReportOptions(in report: XCUIElement, app: XCUIApplication) {
+        report.menuButtons["Report actions"].click()
+        app.menuItems["Report options…"].click()
+        let refresh = app.buttons["Refresh agents"]
+        XCTAssertTrue(refresh.waitForExistence(timeout: 5))
+        report.staticTexts["Comparison report"].click()
+        XCTAssertTrue(refresh.waitForNonExistence(timeout: 5))
     }
 
     @MainActor
@@ -432,10 +444,10 @@ final class WorkflowTests: XCTestCase {
         app.launchArguments = ["--demo", "--isolated-demo"]
         app.launch()
         defer { app.terminate() }
-        app.menuBars.menuBarItems["msgblast"].click()
-        let command = app.menuItems["Build a New Feature…"]
+        let applicationMenu = app.menuBars.menuBarItems["msgblast"]
+        let command = applicationMenu.menuItems["Build a New Feature…"]
+        applicationMenu.click()
         XCTAssertTrue(command.waitForExistence(timeout: 5))
-        guard command.exists else { return }
         command.click()
         let window = app.windows["Build a New Feature"]
         XCTAssertTrue(window.waitForExistence(timeout: 5))
@@ -466,13 +478,14 @@ final class WorkflowTests: XCTestCase {
         XCTAssertTrue(window.buttons["Copy Prompt"].exists, "Editing resets copy confirmation")
         idea.typeKey("a", modifierFlags: .command)
         idea.typeText("Pin my favorite comparisons")
-        app.menuBars.menuBarItems["Help"].click()
-        app.menuItems["Build a New Feature…"].click()
+        let helpMenu = app.menuBars.menuBarItems["Help"]
+        helpMenu.click()
+        helpMenu.menuItems["Build a New Feature…"].click()
         XCTAssertEqual(app.windows.matching(identifier: "Build a New Feature").count, 1)
         XCTAssertEqual(idea.value as? String, "Pin my favorite comparisons")
         window.buttons[XCUIIdentifierCloseWindow].click()
-        app.menuBars.menuBarItems["msgblast"].click()
-        app.menuItems["Build a New Feature…"].click()
+        applicationMenu.click()
+        command.click()
         XCTAssertTrue(window.waitForExistence(timeout: 3))
         XCTAssertEqual(window.textFields["Feature idea, optional"].value as? String, "")
     }
@@ -494,16 +507,9 @@ final class WorkflowTests: XCTestCase {
         let prompt = "Quick Look joined attachment fixture"
         let editor = app.textViews["Shared prompt"]
         editor.click(); editor.typeKey("a", modifierFlags: .command); editor.typeText(prompt)
-        app.menuButtons["Add photo or file"].click()
-        app.menuItems["Choose File…"].click()
-        let picker = app.sheets["open-panel"]
-        XCTAssertTrue(picker.waitForExistence(timeout: 5))
-        app.typeKey("g", modifierFlags: [.command, .shift])
-        let path = app.textFields["PathTextField"]
-        XCTAssertTrue(path.waitForExistence(timeout: 5))
-        path.click(); path.typeKey("a", modifierFlags: .command); path.typeText(file.path)
-        app.typeKey(.return, modifierFlags: [])
-        picker.buttons["Open"].click()
+        NSPasteboard.general.clearContents()
+        XCTAssertTrue(NSPasteboard.general.writeObjects([file as NSURL]))
+        editor.typeKey("v", modifierFlags: .command)
         let previewName = "Preview \(file.lastPathComponent)"
         XCTAssertTrue(app.buttons[previewName].waitForExistence(timeout: 5))
         app.buttons["Send & compare"].click()
@@ -516,12 +522,7 @@ final class WorkflowTests: XCTestCase {
         XCTAssertTrue(app.scrollViews["Image Preview: \(file.lastPathComponent)"].waitForExistence(timeout: 5), "Quick Look must retain the selected attachment when the transcript selects its recipient")
         XCTAssertFalse(app.staticTexts["No items selected"].exists)
         let panel = app.windows["Quick Look"]
-        var rendered = panel.screenshot()
-        let deadline = Date().addingTimeInterval(5)
-        while !previewContainsFixtureColors(rendered), Date() < deadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-            rendered = panel.screenshot()
-        }
+        let rendered = waitForRenderedPreview(in: panel)
         XCTAssertTrue(previewContainsFixtureColors(rendered), "The preview must render the image, not just expose its filename")
         let screenshot = XCTAttachment(screenshot: rendered)
         screenshot.name = "Joined Quick Look — synthetic demo image"
@@ -535,21 +536,42 @@ final class WorkflowTests: XCTestCase {
         images.firstMatch.click()
         XCTAssertTrue(app.scrollViews["Image Preview: \(file.lastPathComponent)"].waitForExistence(timeout: 5), "Closing a preview must allow the same image to be opened again")
         app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(panel.waitForNonExistence(timeout: 5))
         workspace.buttons[XCUIIdentifierCloseWindow].click()
-        app.menuBars.menuBarItems["Comparisons"].click()
-        app.menuItems[prompt].click()
+        let keepActive = workspace.sheets.buttons["Keep Active and Close"]
+        XCTAssertTrue(keepActive.waitForExistence(timeout: 5))
+        keepActive.click()
+        XCTAssertTrue(workspace.waitForNonExistence(timeout: 5))
+        openSavedComparison(prompt, in: app)
         XCTAssertTrue(workspace.waitForExistence(timeout: 5))
-        XCTAssertEqual(workspace.buttons.matching(identifier: previewName).count, 3, "Reopening must preserve all three attachment receipts")
-        workspace.buttons.matching(identifier: previewName).element(boundBy: 1).click()
-        XCTAssertTrue(app.scrollViews["Image Preview: \(file.lastPathComponent)"].waitForExistence(timeout: 5))
-        var reopened = panel.screenshot()
-        let reopenDeadline = Date().addingTimeInterval(5)
-        while !previewContainsFixtureColors(reopened), Date() < reopenDeadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-            reopened = panel.screenshot()
+        XCTAssertEqual(images.count, 3, "Reopening must preserve all three attachment receipts")
+        let secondImage = images.element(boundBy: 1)
+        XCTAssertTrue(secondImage.isHittable)
+        secondImage.click()
+        guard app.scrollViews["Image Preview: \(file.lastPathComponent)"].waitForExistence(timeout: 5) else {
+            return XCTFail("Quick Look did not reopen the selected attachment")
         }
+        let reopened = waitForRenderedPreview(in: panel)
         XCTAssertTrue(previewContainsFixtureColors(reopened), "A reopened conversation must supply the selected file to Quick Look")
     }
+    @MainActor
+    private func openSavedComparison(_ title: String, in app: XCUIApplication) {
+        let menu = app.menuBars.menuBarItems["Comparisons"]
+        menu.click()
+        menu.menuItems[title].click()
+    }
+
+    @MainActor
+    private func waitForRenderedPreview(in panel: XCUIElement) -> XCUIScreenshot {
+        var rendered = panel.screenshot()
+        let deadline = Date().addingTimeInterval(5)
+        while !previewContainsFixtureColors(rendered), Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            rendered = panel.screenshot()
+        }
+        return rendered
+    }
+
     @MainActor
     private func previewContainsFixtureColors(_ screenshot: XCUIScreenshot) -> Bool {
         guard let pixels = NSBitmapImageRep(data: screenshot.pngRepresentation) else { return false }
@@ -568,12 +590,18 @@ final class WorkflowTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--isolated-demo", "--permission-guide-preview"]
         app.launch()
-        XCTAssertTrue(app.staticTexts["Permission guide preview · simulated history denial"].waitForExistence(timeout: 5))
-        app.buttons["Open Settings"].click()
-        let guide = app.dialogs["Messages access guide"]
+        defer { app.terminate() }
+        let skipPermissions = app.buttons["skip-permissions"]
+        XCTAssertTrue(skipPermissions.waitForExistence(timeout: 10))
+        skipPermissions.click()
+        let history = app.switches["enable-messages-history-permission"]
+        XCTAssertTrue(history.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Permission guide preview · simulated history denial"].exists)
+        history.click()
+        let guide = app.descendants(matching: .any).matching(identifier: "Full Disk Access guide").firstMatch
         guard guide.waitForExistence(timeout: 10) else { XCTFail("Permission guide did not appear"); return }
         let drag = guide.buttons["Drag msgblast into Full Disk Access"]
-        XCTAssertTrue(drag.exists)
+        XCTAssertTrue(drag.waitForExistence(timeout: 5))
         XCTAssertTrue(drag.isEnabled)
         let image = XCTAttachment(screenshot: guide.screenshot())
         image.name = "Permission guide — simulated history denial"
@@ -583,28 +611,32 @@ final class WorkflowTests: XCTestCase {
         XCTAssertTrue(guide.exists)
         XCTAssertFalse(app.staticTexts["Done"].exists)
         guide.buttons["Back to msgblast"].click()
-        XCTAssertTrue(app.buttons["Open Settings"].waitForExistence(timeout: 5))
+        XCTAssertTrue(guide.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(history.waitForExistence(timeout: 5))
+        XCTAssertEqual(String(describing: history.value ?? ""), "0")
         XCTAssertFalse(app.staticTexts["Done"].exists)
-        XCTAssertFalse(guide.exists)
+        let returned = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        returned.name = "Workspace after returning — simulated access still off"
+        returned.lifetime = .keepAlways
+        add(returned)
     }
     @MainActor
     func testManualAccountWithoutChatIsSavedButCannotReceiveTheSharedPrompt() {
         let app = launchFixture(separateWindows: false)
-        app.buttons["Add agent"].click()
-        let search = app.textFields["Name, email or phone number"]
+        defer { app.terminate() }
+        app.buttons["Discover"].click()
+        let search = app.textFields["Search Discover"]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
         search.click(); search.typeText("pending@example.com")
-        app.buttons["Search"].click()
         let add = app.buttons["Add pending@example.com"]
         XCTAssertTrue(add.waitForExistence(timeout: 5))
         XCTAssertTrue(add.isEnabled)
         add.click()
-        XCTAssertTrue(app.staticTexts["Saved"].exists)
-        app.buttons["Done"].click()
-        let pending = app.buttons["pending@example.com"]
-        XCTAssertTrue(pending.waitForExistence(timeout: 5))
-        XCTAssertFalse(pending.isEnabled)
-        XCTAssertEqual(pending.value as? String, "Not selected")
+        XCTAssertTrue(app.buttons["Remove pending@example.com"].waitForExistence(timeout: 5), "Discover must show the saved account")
+        XCTAssertTrue(app.staticTexts["No supported conversation found"].exists)
+        app.buttons["Agents"].click()
+        XCTAssertTrue(app.textViews["Shared prompt"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["pending@example.com"].exists, "An unroutable account is hidden from the recipient picker")
         let prompt = app.textViews["Shared prompt"]
         prompt.click(); prompt.typeKey("a", modifierFlags: .command); prompt.typeText("Pending contact regression fixture")
         app.buttons["Send & compare"].click()
@@ -621,17 +653,15 @@ final class WorkflowTests: XCTestCase {
         app.launch()
         // A fresh isolated store must use the joined layout by default.
         if separateWindows {
-            app.menuBars.menuBarItems["msgblast"].click()
-            app.menuItems["Settings…"].click()
-            let layout = app.radioButtons["Separate windows"]
+            let settings = openSettings(app)
+            let layout = settings.radioButtons["Separate windows"]
             XCTAssertTrue(layout.waitForExistence(timeout: 5))
             layout.click()
-            app.windows.matching(identifier: "com_apple_SwiftUI_Settings_window").firstMatch.buttons[XCUIIdentifierCloseWindow].click()
+            settings.buttons[XCUIIdentifierCloseWindow].click()
         }
         let reset = app.buttons["Reset sample data"]
         XCTAssertTrue(reset.waitForExistence(timeout: 10))
         reset.click()
-        for name in ["Muse", "ChatGPT", "Claude", "Grok"] where app.buttons[name].value as? String == "Selected" { app.buttons[name].click() }
         if threeAgentsOnly {
             for name in ["Maple", "Echo", "Flint"] { app.buttons[name].click() }
         }
@@ -813,7 +843,12 @@ final class WorkflowTests: XCTestCase {
         let input = window.textViews["Private reply to Cedar"]
         XCTAssertTrue(input.waitForExistence(timeout: 5))
         let text = String(repeating: "Private sample content wraps across the pane. ", count: 30) + "END OF PRIVATE REPLY"
-        input.click(); input.typeText(text); input.typeKey(.return, modifierFlags: [])
+        input.click()
+        NSPasteboard.general.clearContents()
+        XCTAssertTrue(NSPasteboard.general.setString(text, forType: .string))
+        input.typeKey("v", modifierFlags: .command)
+        XCTAssertEqual(input.value as? String, text)
+        input.typeKey(.return, modifierFlags: [])
         let sent = window.textViews.matching(NSPredicate(format: "value == %@", text)).firstMatch
         let visible = NSPredicate { _, _ in
             guard input.value as? String == "", sent.exists else { return false }
