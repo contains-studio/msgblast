@@ -47,7 +47,11 @@ final class WebServiceTests: XCTestCase {
         try await waitFor { session.actionsForComparison(comparison) != nil }
         XCTAssertNil(session.suggestedPrompts)
         let offer = try XCTUnwrap(session.actionsForComparison(comparison))
-        let text = try XCTUnwrap(session.messagesForComparison(comparison).last?.text)
+        let productReply = try XCTUnwrap(session.messagesForComparison(comparison).last)
+        let text = productReply.text
+        let legacy = WebPageMessage(id: productReply.id, role: "assistant", text: String(repeating: "Old flattened product card ", count: 40))
+        let upgraded = WebAgentSession.keepingSharedTurns([comparison.uuidString: [legacy]], live: [comparison: [productReply]], onPage: [productReply.id])
+        XCTAssertEqual(upgraded[comparison.uuidString], [productReply])
         XCTAssertTrue(text.contains("Steel bottle\nPrice: $14.96\nSize: 26 oz\nhttps://www.walmart.com/ip/Fixture-bottle/123456\n\nPlastic bottle\nPrice: $13.88"))
         XCTAssertEqual(offer.labels, ["Add to cart - Steel bottle", "Add to cart - Plastic bottle"])
         let added = await session.send(offer.labels[0], comparisonID: comparison, action: offer.offerID)

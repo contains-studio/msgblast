@@ -118,6 +118,7 @@ struct WebPageScript {
             if (!role) return [];
             const copy=e.cloneNode(true);
             copy.querySelectorAll('button,[role="button"],time,[role="time"],.clip,svg,style,script').forEach(n=>n.remove());
+            let formattedProducts=false;
             for (const table of copy.querySelectorAll('[data-testid="product-comparison-table"] table')) {
                 const [header,...attributes]=table.rows;
                 if (!header) continue;
@@ -134,7 +135,7 @@ struct WebPageScript {
                     lines.push(url.origin+url.pathname);
                     return [lines.join('\n')];
                 });
-                if (products.length) table.replaceWith('\n\n'+products.join('\n\n')+'\n\n');
+                if (products.length) { table.replaceWith('\n\n'+products.join('\n\n')+'\n\n'); formattedProducts=true; }
             }
             const links=new Set();
             for (const a of copy.querySelectorAll('a[href]')) {
@@ -144,7 +145,7 @@ struct WebPageScript {
             copy.querySelectorAll('br,p,li').forEach(n=>n.append('\n'));
             const body=copy.textContent.split('\n').map(normalized).join('\n').replace(/\n{3,}/g,'\n\n').trim();
             const text=[body,...links].filter(Boolean).join('\n');
-            return text ? [{id,role,text}] : [];
+            return text ? [{id,role,text,...(formattedProducts ? {formattedProducts:true} : {})}] : [];
         };
         const sparkyConversation = () => {
             const turns=all(config.messages).flatMap(sparkyMessage);

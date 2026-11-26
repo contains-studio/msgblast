@@ -107,7 +107,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             var next = 0, anchored = false
             for fresh in current {
                 if let at = merged.firstIndex(where: { $0.id == fresh.id }) {
-                    let turn = fresh.text.count >= merged[at].text.count ? fresh : merged[at]
+                    let prior = merged[at]
+                    let useFresh = fresh.formattedProducts == prior.formattedProducts ? fresh.text.count >= prior.text.count : fresh.formattedProducts == true
+                    let turn = useFresh ? fresh : prior
                     // A turn saved ahead of an earlier page turn moves back into page order.
                     if at < next { merged.remove(at: at); merged.insert(turn, at: next - 1) } else { merged[at] = turn; next = at + 1 }
                     anchored = true

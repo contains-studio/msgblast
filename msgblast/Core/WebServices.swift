@@ -309,6 +309,7 @@ public struct WebPageMessage: Codable, Equatable, Identifiable, Sendable {
     public var id: String
     public var role: String
     public var text: String
+    var formattedProducts: Bool?
     /// Product photo URLs from an Alexa card. Nil for every other message, including saved history from before images existed.
     public var images: [String]?
     public init(id: String = UUID().uuidString, role: String, text: String, images: [String]? = nil) {
