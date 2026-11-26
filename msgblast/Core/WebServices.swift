@@ -338,7 +338,7 @@ public struct WebPageActions: Codable, Equatable, Sendable {
         var label: String
     }
     var cartChoices: [CartChoice]?
-    func labels(for reply: String) -> [String]? {
+    public func labels(for reply: String) -> [String]? {
         guard let cartChoices else { return messageID == reply ? labels : nil }
         let matching = cartChoices.filter { $0.messageID == reply }.map(\.label)
         return matching.isEmpty ? nil : matching
