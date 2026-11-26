@@ -189,7 +189,8 @@ public enum AvailabilityCalculator {
         } else if s.isSending {
             d.readiness = .busy(detail: "Sending to \(s.name)…"); d.add(.sendInFlight, "Sending to \(s.name)…", .none)
         } else if s.signedIn == false || s.signedOut == true {
-            d.readiness = .blocked; d.add(.signedOut, "Sign in to \(s.name) on your Mac", .mac)
+            let site = s.provider == .sparky ? "Walmart" : s.name
+            d.readiness = .blocked; d.add(.signedOut, "Sign in to \(site) on your Mac", .mac)
         } else if s.connected && s.snapshotReason.hasPrefix("Finish the open dialog") {
             d.readiness = .blocked; d.add(.dialogOpen, s.snapshotReason, .mac)
         } else if s.connected && s.snapshotReason.hasPrefix("Wait for") && s.snapshotReason.hasSuffix("current reply.") {
