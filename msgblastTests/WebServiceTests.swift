@@ -50,6 +50,7 @@ final class WebServiceTests: XCTestCase {
         let productReply = try XCTUnwrap(session.messagesForComparison(comparison).last)
         let products = try XCTUnwrap(productReply.products)
         XCTAssertEqual(products.map(\.name), ["Steel bottle", "Plastic bottle", "Glass bottle"])
+        XCTAssertEqual(products.compactMap(\.action), ["Add to cart - Steel bottle", "Add to cart - Plastic bottle"])
         XCTAssertEqual(products.compactMap(\.imageURL).count, 2)
         XCTAssertNotEqual(products[0].imageURL, products[1].imageURL)
         XCTAssertNil(products[2].imageURL)

@@ -151,7 +151,7 @@ struct WebPageScript {
                     lines.push(productURL);
                     const text=lines.join('\n'), cards=liveCards.filter(card=>card.getAttribute('data-item-id')===itemID);
                     const card=cards.length===1 ? cards[0] : null;
-                    const action=card?.querySelector('button[data-automation-id="add-to-cart"]')?.getAttribute('aria-label');
+                    const action=normalized(card?.querySelector('button[data-automation-id="add-to-cart"]')?.getAttribute('aria-label') || '') || undefined;
                     productCards.push({name,url:productURL,text,imageURL:sparkyPhoto(card,name),action});
                     return [text];
                 });
@@ -605,7 +605,7 @@ struct WebPageScript {
                 for (const [name,id,photo] of [['Steel bottle','123456','https://i5.walmartimages.com/seo/Ello-Flip-Fill-32-oz-Stainless-Steel-Water-Bottle-Lavendar_fc9a14dd-82ad-4772-9eb7-a0c22e549a94.4701e8e002c00df04887224613f480b4.jpeg?odnHeight=208&odnWidth=208&odnBg=FFFFFF'],['Plastic bottle','234567','https://i5.walmartimages.com/seo/Athletic-Works-Shaker-Bottle-Gray-24oz_a5217945-e39a-4670-bee1-02d480782840.126984729927113f1c3fc2e3447d2f9e.jpeg?odnHeight=208&odnWidth=208&odnBg=FFFFFF'],['Glass bottle','345678',null]]) {
                     const card=document.createElement('div');card.setAttribute('role','group');card.dataset.itemId=id;
                     const link=document.createElement('a');link.href='/ip/Fixture-bottle/'+id;link.textContent=name;
-                    const add=document.createElement('button');add.dataset.automationId='add-to-cart';add.setAttribute('aria-label','Add to cart - '+name);add.textContent='Add';
+                    const add=document.createElement('button');add.dataset.automationId='add-to-cart';add.setAttribute('aria-label','Add to cart - '+name.replace(' ', '  '));add.textContent='Add';
                     add.onclick=()=>{add.removeAttribute('data-automation-id');add.setAttribute('aria-label','Decrease quantity for '+name);add.textContent='1 in cart'};
                     card.append(link);
                     if (photo) {
