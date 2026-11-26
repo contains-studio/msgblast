@@ -45,7 +45,7 @@ final class WebServiceTests: XCTestCase {
         XCTAssertEqual(count, 1)
         session.connect()
         try await waitFor { session.snapshot.ready }
-        _ = try await session.webView.evaluateJavaScript("turn('Sent message,','Unanswered question')")
+        _ = try await session.webView.evaluateJavaScript("turn('Sent message,','Unanswered question'); true")
         await session.refresh()
         XCTAssertFalse(session.snapshot.ready)
         _ = try await session.webView.callAsyncJavaScript(
