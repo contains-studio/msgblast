@@ -370,11 +370,19 @@ struct AgentsWorkspaceView: View {
 }
 
 struct LocalAgentSettingsView: View {
-    @ObservedObject var agent: PersonalAgentController
-    @ObservedObject var web: WebAgents
-    var busy = false
+    private let model: AppModel
+    @ObservedObject private var agent: PersonalAgentController
+    @ObservedObject private var web: WebAgents
+    var busy: Bool
     @State private var setupRuntime: LocalAgentRuntime?
     private var isBusy: Bool { busy || !agent.running.isEmpty }
+
+    init(model: AppModel, busy: Bool) {
+        self.model = model
+        self.agent = model.personalAgent
+        self.web = model.webAgents
+        self.busy = busy
+    }
 
     private var sortedRuntimes: [LocalAgentRuntime] {
         LocalAgentRuntime.allCases.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
@@ -398,7 +406,7 @@ struct LocalAgentSettingsView: View {
                 let provider = webProvider.personalAgentProvider!
                 Toggle("Enable \(webProvider.name)", isOn: Binding(
                     get: { web.sessions.first(where: { $0.provider == webProvider })?.isEnabled == true },
-                    set: { web.setEnabled($0, for: webProvider) }
+                    set: { setCLIEnabled($0, provider: webProvider) }
                 )).toggleStyle(.switch).accessibilityIdentifier("Enable \(webProvider.name)")
                     .disabled(isBusy).padding(.top, 8)
                 let installed = agent.installed.contains { $0.provider == provider }
@@ -451,6 +459,16 @@ struct LocalAgentSettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await refresh() }
         }
+    }
+
+    private func setCLIEnabled(_ enabled: Bool, provider: WebProvider) {
+        let id = AgentGridID.web(provider)
+        if enabled, !model.isVisibleInAgentGrid(id) {
+            var grid = model.agentGridLayout
+            grid.add(id)
+            guard model.setAgentGrid(grid) else { return }
+        }
+        web.setEnabled(enabled, for: provider)
     }
 
     private func refresh() async {

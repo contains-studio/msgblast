@@ -64,18 +64,8 @@ final class WebServiceWorkflowTests: XCTestCase {
 
     @MainActor
     private func selectWebFixtureRecipients(_ app: XCUIApplication) {
-        // New profiles explicitly enable website alternatives in Settings.
-        app.typeKey(",", modifierFlags: .command)
-        app.staticTexts["settings-page-websites"].click()
-        for provider in ["muse", "chatgpt", "claude", "grok"] {
-            let toggle = app.switches["enable-web-\(provider)"]
-            XCTAssertTrue(toggle.waitForExistence(timeout: 5))
-            let enabled = (toggle.value as? NSNumber)?.boolValue ??
-                ["1", "on"].contains(toggle.value as? String ?? "")
-            if !enabled { toggle.click() }
-        }
-        app.typeKey("w", modifierFlags: .command)
-        for name in ["Muse", "ChatGPT", "Claude", "Grok"] {
+        app.enableFixtureWebsites("muse", "chatgpt", "claude", "grok")
+        for name in ["Muse Web", "ChatGPT Web", "Claude Web", "Grok Web"] {
             let button = app.buttons[name]
             XCTAssertTrue(button.waitForExistence(timeout: 5))
             if button.value as? String != "Selected" { button.click() }
@@ -89,23 +79,17 @@ final class WebServiceWorkflowTests: XCTestCase {
         app.launch()
         defer { app.terminate() }
         XCTAssertTrue(app.buttons["Edit agents"].waitForExistence(timeout: 10))
-        if !app.buttons["Muse"].exists || !app.buttons["ChatGPT"].exists {
-            app.buttons["Edit agents"].click()
-            for name in ["Muse", "ChatGPT"] where app.buttons["Add \(name)"].exists {
-                app.scrollViews["Agent grid scroll area"].scroll(byDeltaX: 0, deltaY: -1000)
-                app.buttons["Add \(name)"].click()
-            }
-            app.buttons["Done editing agents"].click()
-        }
-        for name in ["Muse", "ChatGPT"] {
+        app.enableFixtureWebsites("muse", "chatgpt")
+        for name in ["Muse Web", "ChatGPT Web"] {
             let tile = app.buttons[name]
-            XCTAssertTrue(tile.waitForExistence(timeout: 10))
-            if tile.value as? String != "Selected" { tile.click() }
+            XCTAssertTrue(tile.waitForExistence(timeout: 5))
+            tile.click()
+            XCTAssertEqual(tile.value as? String, "Selected")
         }
         let prompt = app.textViews["Shared prompt"]
         prompt.click(); prompt.typeKey("a", modifierFlags: .command); prompt.typeText("Remove web pane fixture")
         app.buttons["Send & compare"].click()
-        let header = app.descendants(matching: .any).matching(identifier: "Agent header Muse").firstMatch
+        let header = app.descendants(matching: .any).matching(identifier: "Agent header Muse Web").firstMatch
         XCTAssertTrue(header.waitForExistence(timeout: 15))
         capture(app, name: "Before removal — simulated comparison")
         header.rightClick()
@@ -113,16 +97,16 @@ final class WebServiceWorkflowTests: XCTestCase {
         capture(app, name: "Header removal menu — simulated comparison")
         app.menuItems["Remove from view"].click()
         XCTAssertFalse(header.exists)
-        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "Agent header ChatGPT").firstMatch.exists)
-        XCTAssertEqual(app.buttons["Recipient Muse"].value as? String, "Not selected")
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "Agent header ChatGPT Web").firstMatch.exists)
+        XCTAssertEqual(app.buttons["Recipient Muse Web"].value as? String, "Not selected")
         capture(app, name: "After removal — simulated comparison")
-        app.buttons["Recipient Muse"].click()
+        app.buttons["Recipient Muse Web"].click()
         XCTAssertTrue(header.waitForExistence(timeout: 5))
         XCTAssertTrue(reply(app, containing: "Fixture reply: Remove web pane fixture").exists)
     }
 
     @MainActor
-    func testSevenChatsResizeWindowAndRemainReachable() {
+    func testSevenChatsCanBeHiddenAndRestoredWithoutResizing() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--isolated-demo"]
         app.launch()
@@ -132,23 +116,30 @@ final class WebServiceWorkflowTests: XCTestCase {
         XCTAssertTrue(app.buttons["Maple"].waitForExistence(timeout: 5))
         for name in ["Maple", "Echo", "Flint"] { app.buttons[name].click() }
         app.buttons["Send & compare"].click()
-        XCTAssertTrue(app.staticTexts["Chats (7)"].waitForExistence(timeout: 15))
-        let wideWidth = app.windows.firstMatch.frame.width
-        for name in ["Muse", "ChatGPT", "Claude", "Grok", "Cedar", "Lumen", "Orbit"] {
-            let tab = app.buttons["Show \(name) chat"]
-            XCTAssertTrue(tab.exists)
-            tab.click()
+        let window = app.windows.firstMatch
+        let webAgents = ["Muse Web", "ChatGPT Web", "Claude Web", "Grok Web"]
+        let messagesAgents = ["Cedar", "Lumen", "Orbit"]
+        let headers = webAgents.map {
+            app.descendants(matching: .any).matching(identifier: "Agent header \($0)").firstMatch
         }
-        for name in ["Muse", "ChatGPT", "Claude", "Grok"] { app.buttons["Recipient \(name)"].click() }
-        XCTAssertTrue(app.staticTexts["Chats (3)"].waitForExistence(timeout: 5))
-        let narrowed = NSPredicate { _, _ in app.windows.firstMatch.frame.width <= min(wideWidth, 1500) }
-        expectation(for: narrowed, evaluatedWith: app.windows.firstMatch)
-        waitForExpectations(timeout: 5)
-        for name in ["Muse", "ChatGPT", "Claude", "Grok"] { app.buttons["Recipient \(name)"].click() }
-        XCTAssertTrue(app.staticTexts["Chats (7)"].waitForExistence(timeout: 5))
-        let expanded = NSPredicate { _, _ in app.windows.firstMatch.frame.width >= wideWidth - 1 }
-        expectation(for: expanded, evaluatedWith: app.windows.firstMatch)
-        waitForExpectations(timeout: 5)
+        XCTAssertTrue(headers[0].waitForExistence(timeout: 15))
+        let composers = messagesAgents.map { app.textViews["Private reply to \($0)"] }
+        XCTAssertTrue(composers[0].waitForExistence(timeout: 5))
+        for pane in headers + composers { XCTAssertTrue(pane.exists) }
+        let wideWidth = window.frame.width
+        for header in headers {
+            XCTAssertTrue(header.isHittable)
+            header.rightClick()
+            app.menuItems["Remove from view"].click()
+            XCTAssertTrue(header.waitForNonExistence(timeout: 5))
+        }
+        for composer in composers { XCTAssertTrue(composer.isHittable) }
+        XCTAssertEqual(window.frame.width, wideWidth, accuracy: 1)
+        for (name, header) in zip(webAgents, headers) {
+            app.buttons["Recipient \(name)"].click()
+            XCTAssertTrue(header.waitForExistence(timeout: 5))
+        }
+        XCTAssertEqual(window.frame.width, wideWidth, accuracy: 1)
         capture(app, name: "Seven reachable chats — isolated fixture")
     }
 
@@ -159,7 +150,7 @@ final class WebServiceWorkflowTests: XCTestCase {
         app.launch()
         selectWebFixtureRecipients(app)
         defer { app.terminate() }
-        let excluded = ["Cedar", "Lumen", "Orbit", "Maple", "Echo", "Flint", "Claude", "Grok"]
+        let excluded = ["Cedar", "Lumen", "Orbit", "Maple", "Echo", "Flint", "Claude Web", "Grok Web"]
         for name in excluded {
             let button = app.buttons[name]
             XCTAssertTrue(button.waitForExistence(timeout: 5))
@@ -183,15 +174,13 @@ final class WebServiceWorkflowTests: XCTestCase {
         }
         broadcast("Original joining fixture ask")
         broadcast("Shared joining fixture follow-up")
-        app.buttons["Recipient ChatGPT"].click()
+        app.buttons["Recipient ChatGPT Web"].click()
         broadcast("Private joining fixture detail")
         capture(app, name: "Before adding Grok — isolated simulated chats")
-        app.buttons["Recipient Grok"].click()
-        let context = app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@ AND value CONTAINS %@", "Original ask:", "Follow-up 1:")).firstMatch
-        XCTAssertTrue(context.waitForExistence(timeout: 15))
-        XCTAssertTrue((context.value as? String ?? context.label).contains("Shared joining fixture follow-up"))
-        XCTAssertFalse((context.value as? String ?? context.label).contains("Private joining fixture detail"))
-        XCTAssertEqual(app.buttons["Recipient Grok"].value as? String, "Selected")
+        app.buttons["Recipient Grok Web"].click()
+        assertJoiningReply(app, agent: "Grok Web", original: "Original joining fixture ask",
+                           shared: "Shared joining fixture follow-up", privateDetail: "Private joining fixture detail")
+        XCTAssertEqual(app.buttons["Recipient Grok Web"].value as? String, "Selected")
         capture(app, name: "Grok joined existing blast with shared context — isolated simulated chats")
         app.buttons["Recipient Cedar"].click()
         let cedar = app.buttons["Recipient Cedar"]
@@ -209,23 +198,19 @@ final class WebServiceWorkflowTests: XCTestCase {
         app.launch()
         selectWebFixtureRecipients(app)
         defer { app.terminate() }
-        XCTAssertTrue(app.buttons["Muse"].waitForExistence(timeout: 5))
-        let settings = openSettingsPage(app, "cli")
-        for name in ["Codex CLI", "Claude Code"] {
-            XCTAssertTrue(settings.staticTexts["Enable \(name)"].waitForExistence(timeout: 5))
-            let toggle = settings.switches["Enable \(name)"]
-            XCTAssertTrue(toggle.waitForExistence(timeout: 5))
-            toggle.click()
-            if String(describing: toggle.value ?? "") == "0" { toggle.click() }
-            XCTAssertEqual(String(describing: toggle.value ?? ""), "1")
-        }
+        XCTAssertTrue(app.buttons["Muse Web"].waitForExistence(timeout: 5))
+        let settings = enableCLIFixtureAccounts(in: app)
         settings.buttons[XCUIIdentifierCloseWindow].click()
-        let excluded = ["Cedar", "Lumen", "Orbit", "Maple", "Echo", "Flint", "Muse", "ChatGPT", "Claude", "Grok", "Claude Code"]
+        let excluded = ["Cedar", "Lumen", "Orbit", "Maple", "Echo", "Flint", "Muse Web", "ChatGPT Web", "Claude Web", "Grok Web", "Claude Code"]
         for _ in 0..<2 {
             for name in excluded where app.buttons[name].value as? String == "Selected" { app.buttons[name].click() }
         }
         for name in excluded { XCTAssertEqual(app.buttons[name].value as? String, "Not selected") }
-        app.buttons["Codex CLI"].rightClick()
+        let codex = app.buttons["Codex CLI"]
+        XCTAssertTrue(codex.waitForExistence(timeout: 5))
+        XCTAssertEqual(codex.value as? String, "Not selected")
+        codex.click()
+        codex.rightClick()
         app.menuItems["Open chat"].click()
         let direct = app.textViews["Message Codex CLI"]
         XCTAssertTrue(direct.waitForExistence(timeout: 10))
@@ -243,16 +228,16 @@ final class WebServiceWorkflowTests: XCTestCase {
         XCTAssertTrue(reply(app, containing: "Codex CLI fixture reply: Shared CLI follow-up").waitForExistence(timeout: 15))
         capture(app, name: "Private sole CLI conversation before joins — isolated fixture")
         shared.click(); shared.typeText("Retained unsent shared draft")
-        for name in ["Grok", "Claude Code", "Cedar"] {
+        for name in ["Grok Web", "Claude Code", "Cedar"] {
             app.buttons["Recipient \(name)"].click()
             let deadline = Date().addingTimeInterval(15)
             while !app.buttons["Send & compare"].isEnabled, Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
             XCTAssertEqual(app.buttons["Recipient \(name)"].value as? String, "Selected")
         }
-        XCTAssertTrue(reply(app, containing: "Claude Code fixture reply: You are joining an existing conversation").waitForExistence(timeout: 15))
-        let contexts = app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@ AND value CONTAINS %@", "Original ask:", "Shared CLI follow-up"))
-        XCTAssertTrue(contexts.firstMatch.waitForExistence(timeout: 15))
-        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@ AND value CONTAINS %@", "Original ask:", "Private CLI detail")).count, 0)
+        for agent in ["Grok Web", "Claude Code"] {
+            assertJoiningReply(app, agent: agent, original: "Original CLI privacy ask",
+                               shared: "Shared CLI follow-up", privateDetail: "Private CLI detail")
+        }
         XCTAssertEqual(app.textViews.matching(NSPredicate(format: "value == %@", "Private CLI detail")).count, 0)
         XCTAssertEqual(shared.value as? String, "Retained unsent shared draft")
         capture(app, name: "Web CLI and Messages joins exclude private CLI detail — isolated fixture")
@@ -265,47 +250,42 @@ final class WebServiceWorkflowTests: XCTestCase {
         app.launch()
         selectWebFixtureRecipients(app)
         defer { app.terminate() }
-        for name in ["Muse", "ChatGPT", "Claude", "Grok"] {
+        for name in ["Muse Web", "ChatGPT Web", "Claude Web", "Grok Web"] {
             XCTAssertTrue(app.buttons[name].waitForExistence(timeout: 5))
             XCTAssertEqual(app.buttons[name].value as? String, "Selected")
         }
-        XCTAssertTrue(app.buttons["Codex CLI"].exists)
-        XCTAssertEqual(app.buttons["Codex CLI"].value as? String, "Set up")
+        XCTAssertFalse(app.buttons["Codex CLI"].exists)
         XCTAssertFalse(app.buttons["Claude Code"].exists)
         XCTAssertFalse(app.staticTexts["Your local accounts (simulated)"].exists)
         capture(app, name: "Featured grid with optional CLI setup — isolated fixture")
-        let settings = openSettingsPage(app, "cli")
-        for name in ["Codex CLI", "Claude Code"] {
-            let toggle = settings.switches["Enable \(name)"]
-            XCTAssertTrue(toggle.waitForExistence(timeout: 5))
-            XCTAssertEqual(toggle.value as? String, "0")
-            toggle.click()
-        }
+        let settings = enableCLIFixtureAccounts(in: app)
         capture(app, name: "Optional CLI toggles in Settings — simulated accounts")
         settings.buttons[XCUIIdentifierCloseWindow].click()
-        for name in ["Cedar", "Lumen", "Orbit", "Maple", "Echo", "Flint", "Muse", "Grok"] { app.buttons[name].click() }
+        for name in ["Cedar", "Lumen", "Orbit", "Maple", "Echo", "Flint", "Muse Web", "Grok Web"] { app.buttons[name].click() }
         for name in ["Codex CLI", "Claude Code"] {
-            XCTAssertEqual(app.buttons[name].value as? String, "Not selected", "Enabling an account is separate from choosing a recipient")
-            app.buttons[name].click()
-            XCTAssertEqual(app.buttons[name].value as? String, "Selected")
+            let tile = app.buttons[name]
+            XCTAssertTrue(tile.waitForExistence(timeout: 5), "Enabling a CLI adds it to an existing custom grid")
+            XCTAssertEqual(tile.value as? String, "Not selected", "Enabling an account is separate from choosing a recipient")
+            tile.click()
+            XCTAssertEqual(tile.value as? String, "Selected")
         }
         let editor = app.textViews["Shared prompt"]
         editor.click(); editor.typeKey("a", modifierFlags: .command); editor.typeText("Web and CLI comparison fixture")
         app.buttons["Send & compare"].click()
-        for name in ["ChatGPT", "Claude", "Codex CLI", "Claude Code"] {
+        for name in ["ChatGPT Web", "Claude Web", "Codex CLI", "Claude Code"] {
             XCTAssertTrue(reply(app, containing: "\(name) fixture reply: Web and CLI comparison fixture").waitForExistence(timeout: 15))
         }
         XCTAssertEqual(app.webViews.count, 2, "Website chats coexist with two separate native CLI panes")
         XCTAssertFalse(app.buttons["Switch account"].exists)
         capture(app, name: "Website and CLI replies in the same blast — synthetic replies")
         app.buttons["New Blast"].click()
-        let comparison = app.outlines.cells.containing(NSPredicate(format: "label CONTAINS %@", "Web and CLI comparison fixture")).firstMatch
+        let comparison = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Web and CLI comparison fixture")).firstMatch
         XCTAssertTrue(comparison.waitForExistence(timeout: 5))
         comparison.click()
         XCTAssertTrue(reply(app, containing: "Codex CLI fixture reply: Web and CLI comparison fixture").waitForExistence(timeout: 10))
         editor.click(); editor.typeText("Continue each saved conversation")
         app.buttons["Send & compare"].click()
-        for name in ["ChatGPT", "Claude", "Codex CLI", "Claude Code"] {
+        for name in ["ChatGPT Web", "Claude Web", "Codex CLI", "Claude Code"] {
             XCTAssertTrue(reply(app, containing: "\(name) fixture reply: Continue each saved conversation").waitForExistence(timeout: 15))
         }
         app.typeKey(",", modifierFlags: .command)
@@ -321,6 +301,32 @@ final class WebServiceWorkflowTests: XCTestCase {
     }
 
     @MainActor
+    private func enableCLIFixtureAccounts(in app: XCUIApplication) -> XCUIElement {
+        let settings = openSettingsPage(app, "cli")
+        for name in ["Codex CLI", "Claude Code"] {
+            let toggle = settings.switches["Enable \(name)"]
+            XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+            XCTAssertEqual(String(describing: toggle.value ?? ""), "0")
+            toggle.click()
+            XCTAssertEqual(String(describing: toggle.value ?? ""), "1")
+        }
+        return settings
+    }
+
+    @MainActor
+    private func assertJoiningReply(_ app: XCUIApplication, agent: String, original: String, shared: String,
+                                    privateDetail: String, file: StaticString = #filePath, line: UInt = #line) {
+        let echo = reply(app, containing: "\(agent) fixture reply: \(original)")
+        guard echo.waitForExistence(timeout: 15) else {
+            XCTFail("\(agent) did not receive the original ask", file: file, line: line)
+            return
+        }
+        let text = echo.value as? String ?? echo.label
+        XCTAssertTrue(text.contains(shared), file: file, line: line)
+        XCTAssertFalse(text.contains(privateDetail), file: file, line: line)
+    }
+
+    @MainActor
     private func reply(_ app: XCUIApplication, containing text: String) -> XCUIElement {
         app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", text, text)).firstMatch
     }
@@ -328,6 +334,8 @@ final class WebServiceWorkflowTests: XCTestCase {
     @MainActor
     func testSignedInWebsitesSkipConnectionIntro() {
         let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--isolated-demo"]
+        app.launch()
         app.launchArguments = ["--demo", "--isolated-demo"]
         app.launch()
         selectWebFixtureRecipients(app)
@@ -338,7 +346,7 @@ final class WebServiceWorkflowTests: XCTestCase {
         let editor = app.textViews["Shared prompt"]
         editor.click(); editor.typeKey("a", modifierFlags: .command); editor.typeText("Already signed in fixture")
         app.buttons["Send & compare"].click()
-        for name in ["ChatGPT", "Claude", "Grok"] {
+        for name in ["ChatGPT Web", "Claude Web", "Grok Web"] {
             XCTAssertTrue(reply(app, containing: "\(name) fixture reply: Already signed in fixture").waitForExistence(timeout: 15))
         }
         XCTAssertTrue(reply(app, containing: "Fixture reply: Already signed in fixture").exists)
@@ -354,8 +362,8 @@ final class WebServiceWorkflowTests: XCTestCase {
         selectWebFixtureRecipients(app)
         app.activate()
         defer { app.terminate() }
-        for name in ["Maple", "Echo", "Flint", "ChatGPT", "Claude", "Grok"] { app.buttons[name].click() }
-        app.buttons["Muse"].rightClick()
+        for name in ["Maple", "Echo", "Flint", "ChatGPT Web", "Claude Web", "Grok Web"] { app.buttons[name].click() }
+        app.buttons["Muse Web"].rightClick()
         app.menuItems["Open chat"].click()
         let signOut = app.buttons["Sign out of fixture"]
         XCTAssertTrue(signOut.waitForExistence(timeout: 10))
@@ -388,7 +396,7 @@ final class WebServiceWorkflowTests: XCTestCase {
         for name in ["Cedar", "Lumen", "Orbit"] {
             XCTAssertTrue(app.textViews["Private reply to \(name)"].waitForExistence(timeout: 10), "Messages recipients become full conversation panes after sending")
         }
-        XCTAssertFalse(app.staticTexts["Appeared in Muse"].exists)
+        XCTAssertFalse(app.staticTexts["Appeared in Muse Web"].exists)
     }
 
     @MainActor
@@ -400,7 +408,7 @@ final class WebServiceWorkflowTests: XCTestCase {
         defer { app.terminate() }
         for name in ["Lumen", "Orbit", "Maple", "Echo", "Flint"] { app.buttons[name].click() }
         app.checkBoxes["Simulate one failure"].click()
-        for name in ["ChatGPT", "Claude", "Grok"] { app.buttons[name].click() }
+        for name in ["ChatGPT Web", "Claude Web", "Grok Web"] { app.buttons[name].click() }
         let editor = app.textViews["Shared prompt"]
         editor.click(); editor.typeKey("a", modifierFlags: .command); editor.typeText("Mixed failure fixture")
         app.buttons["Send & compare"].click()
@@ -421,15 +429,15 @@ final class WebServiceWorkflowTests: XCTestCase {
         app.launch()
         selectWebFixtureRecipients(app)
         defer { app.terminate() }
-        XCTAssertTrue(app.buttons["Muse"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.buttons["Muse"].value as? String, "Selected")
+        XCTAssertTrue(app.buttons["Muse Web"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons["Muse Web"].value as? String, "Selected")
         XCTAssertFalse(app.staticTexts["Web services"].exists)
         XCTAssertFalse(app.staticTexts["Grok Bot · unavailable"].exists)
         for name in ["Lumen", "Orbit", "Maple", "Echo", "Flint"] { app.buttons[name].click() }
-        for name in ["ChatGPT", "Claude", "Grok"] { app.buttons[name].click() }
-        XCTAssertEqual(app.buttons["Muse"].value as? String, "Selected")
+        for name in ["ChatGPT Web", "Claude Web", "Grok Web"] { app.buttons[name].click() }
+        XCTAssertEqual(app.buttons["Muse Web"].value as? String, "Selected")
         capture(app, name: "Muse selected beside Messages agents — local fixture")
-        app.buttons["Muse"].rightClick()
+        app.buttons["Muse Web"].rightClick()
         app.menuItems["Open chat"].click()
         XCTAssertTrue(app.buttons["Sign out of fixture"].waitForExistence(timeout: 10))
         capture(app, name: "Muse connected — local fixture")
@@ -452,16 +460,16 @@ final class WebServiceWorkflowTests: XCTestCase {
         XCTAssertTrue(app.textViews.matching(NSPredicate(format: "value == %@", "Cedar direct reply from its pane")).firstMatch.waitForExistence(timeout: 10))
         XCTAssertEqual(privateReply.value as? String, "")
         XCTAssertEqual(editor.value as? String, "Keep this shared draft")
-        XCTAssertFalse(reply(app, containing: "Fixture reply: Cedar direct reply from its pane").exists, "Private Messages replies must not be sent to Muse")
+        XCTAssertFalse(reply(app, containing: "Fixture reply: Cedar direct reply from its pane").exists, "Private Messages replies must not be sent to Muse Web")
         capture(app, name: "Direct Messages pane reply — simulated Messages, shared draft retained")
         app.buttons["New Blast"].click()
-        XCTAssertEqual(app.buttons["Muse"].value as? String, "Selected")
+        XCTAssertEqual(app.buttons["Muse Web"].value as? String, "Selected")
         XCTAssertEqual(app.buttons["Cedar"].value as? String, "Selected")
         XCTAssertEqual(app.textViews["Shared prompt"].value as? String, "Keep this shared draft")
-        app.buttons["Muse"].rightClick()
+        app.buttons["Muse Web"].rightClick()
         app.menuItems["Open chat"].click()
-        XCTAssertFalse(app.staticTexts["Appeared in Muse"].exists)
-        XCTAssertFalse(app.buttons["Check Muse connection"].exists)
+        XCTAssertFalse(app.staticTexts["Appeared in Muse Web"].exists)
+        XCTAssertFalse(app.buttons["Check Muse Web connection"].exists)
     }
 
     /// Opens Settings and selects a sidebar page.
@@ -480,5 +488,21 @@ final class WebServiceWorkflowTests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+}
+
+@MainActor extension XCUIApplication {
+    func enableFixtureWebsites(_ providers: String...) {
+        typeKey(",", modifierFlags: .command)
+        let settings = windows["com_apple_SwiftUI_Settings_window"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settings.staticTexts["settings-page-websites"].click()
+        for provider in providers {
+            let toggle = settings.switches["enable-web-\(provider)"]
+            XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+            if String(describing: toggle.value ?? "") == "0" { toggle.click() }
+            XCTAssertEqual(String(describing: toggle.value ?? ""), "1")
+        }
+        settings.buttons[XCUIIdentifierCloseWindow].click()
     }
 }

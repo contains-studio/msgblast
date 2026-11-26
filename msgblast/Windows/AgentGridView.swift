@@ -130,7 +130,7 @@ struct AgentGridView: View {
                     } else {
                         switch id {
                         case .web, .webInstance, .runtime:
-                            LocalAgentSettingsView(agent: model.personalAgent, web: web, busy: busy)
+                            LocalAgentSettingsView(model: model, busy: busy)
                         case .featuredMessages(let choice):
                             FeaturedMessagesGridSetup(model: model, choice: choice)
                         case .messages:
