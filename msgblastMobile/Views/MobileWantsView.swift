@@ -55,7 +55,7 @@ struct MobileWantsView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         Image(systemName: "checklist")
                             .font(.largeTitle).foregroundStyle(.tint).accessibilityHidden(true)
-                        Text("What would you like help with?")
+                        Text("What do you want help with?")
                             .font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
                         Text("Make a list of things to buy, tasks to finish, or questions to answer. Give it to an agent, then review the products, updates, or answers it brings back.")
                             .foregroundStyle(.secondary)
