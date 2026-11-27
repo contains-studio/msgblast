@@ -160,11 +160,14 @@ private struct WantsItemDetail: View {
             if !entries.isEmpty {
                 Section(format.entries) {
                     ForEach(entries) { entry in
-                        VStack(alignment: .leading) {
-                            if let url = WantJSON.webURL(entry.link) { Link(entry.title, destination: url) }
-                            else { Text(entry.title) }
-                            if let price = entry.currentPrice {
-                                Text(price.formatted + (price.isVerified ? "" : " · Unverified")).font(.subheadline)
+                        HStack(spacing: Space.inset) {
+                            if format == .shopping { offerThumbnail(entry.imageUrl) }
+                            VStack(alignment: .leading) {
+                                if let url = WantJSON.webURL(entry.link) { Link(entry.title, destination: url) }
+                                else { Text(entry.title) }
+                                if let price = entry.currentPrice {
+                                    Text(price.formatted + (price.isVerified ? "" : " · Unverified")).font(.subheadline)
+                                }
                             }
                         }
                     }
@@ -176,6 +179,20 @@ private struct WantsItemDetail: View {
         .navigationTitle(format.item)
         .wantsActivity(client: client, refresh: refresh)
         .refreshable { await refresh() }
+    }
+
+    private func offerThumbnail(_ address: String?) -> some View {
+        AsyncImage(url: WantJSON.webURL(address)) { phase in
+            if let image = phase.image {
+                image.resizable().scaledToFit()
+            } else {
+                Image(systemName: "photo").foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: 64, height: 64)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: Space.gap))
+        .clipShape(RoundedRectangle(cornerRadius: Space.gap))
+        .accessibilityHidden(true)
     }
 
     private func refresh() async {
