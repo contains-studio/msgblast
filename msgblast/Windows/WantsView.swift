@@ -101,7 +101,7 @@ private struct WantsSignInView: View {
                     Button("I already have a list key") { showingKey = true }.buttonStyle(.link)
                 }
             }
-        }.sheet(isPresented: $startingList) { StartWantListSheet(start: wants.startList) }
+        }.sheet(isPresented: $startingList) { StartWantListSheet(start: wants.startList, save: wants.saveStartedList) }
         .multilineTextAlignment(.center).padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

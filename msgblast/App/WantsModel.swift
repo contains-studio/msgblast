@@ -189,18 +189,22 @@ import msgblastRemoteProtocol
 
     var claim: WantClaim? { credential?.claim }
 
-    func startList(title: String, format: WantFormat) async throws {
+    func startList(title: String, format: WantFormat) async throws -> WantCredential {
+        guard canSave else { throw WantError.server("Wants settings could not be read. The existing file has been preserved.") }
         guard !signedIn, !signingIn else { throw CancellationError() }
         if app.demo {
             let fixture = WantFixture()
             service = fixture
-            let grant = await fixture.startList(title: title, format: format)
-            guard store(grant) else { throw WantError.server("The list could not be saved.") }
+            return await fixture.startList(title: title, format: format)
         } else {
             guard keychain.endpoint == WantOAuth.resource else { throw WantError.server("Start a list requires The Want MCP.") }
-            let grant = try await WantClaim.start(title: title, format: format)
-            guard store(grant) else { throw WantError.server("The list key could not be saved.") }
+            return try await WantClaim.start(title: title, format: format)
         }
+    }
+
+    func saveStartedList(_ grant: WantCredential) throws {
+        guard !signedIn, !signingIn else { throw CancellationError() }
+        guard store(grant) else { throw WantError.server("The list was created. Retry saving it on this Mac.") }
     }
 
     func keepList(_ claim: WantClaim) {
