@@ -76,14 +76,17 @@ private struct WantsSignInView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Image(systemName: "gift").font(.system(size: 44)).foregroundStyle(.tint)
-            Text("The Want MCP").font(.title2.bold())
-            Text("An MCP server for getting what you want.").foregroundStyle(.secondary)
+            Image(systemName: "checklist").font(.largeTitle).foregroundStyle(.tint).accessibilityHidden(true)
+            Text("What would you like help with?").font(.title.bold()).accessibilityAddTraits(.isHeader)
+            Text("Make a list of things to buy, tasks to finish, or questions to answer. Give it to an agent, then review the products, updates, or answers it brings back.")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: 360)
+                .padding(.bottom, 6)
             if wants.signingIn {
                 HStack { ProgressView().controlSize(.small); Text("Finish signing in in your browser.") }
                 Button("Cancel") { wants.cancelSignIn() }
             } else {
-                Button("Sign In…") { Task { await wants.signIn() } }.buttonStyle(.borderedProminent).controlSize(.large)
+                Button("Sign in to Wants") { Task { await wants.signIn() } }.buttonStyle(.borderedProminent).controlSize(.large)
                 if showingKey {
                     HStack {
                         SecureField("wk_…", text: $key).textFieldStyle(.roundedBorder).frame(width: 260)
@@ -93,10 +96,10 @@ private struct WantsSignInView: View {
                     }
                     Text("On wantmcp.com, open a list's settings, then Agents › Add another agent.").font(.callout).foregroundStyle(.secondary)
                 } else {
-                    Button("Use a Write Key") { showingKey = true }.buttonStyle(.link)
+                    Button("I already have a list key") { showingKey = true }.buttonStyle(.link)
                 }
             }
-        }.padding(40).frame(maxWidth: .infinity, maxHeight: .infinity)
+        }.multilineTextAlignment(.center).padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
