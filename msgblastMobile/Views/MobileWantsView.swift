@@ -144,7 +144,7 @@ private struct WantsItemDetail: View {
         List {
             Section {
                 Text(item.text).font(.headline)
-                if let details = item.details ?? item.detailsPreview { Text(details) }
+                if let details = item.details ?? item.detailsPreview, !details.isEmpty { Text(details) }
             }
             if let question = item.openQuestion {
                 Section(WantFormat.waiting) {
@@ -157,13 +157,15 @@ private struct WantsItemDetail: View {
                     .id(question.id)
                 }
             }
-            Section(format.entries) {
-                ForEach(entries) { entry in
-                    VStack(alignment: .leading) {
-                        if let url = WantJSON.webURL(entry.link) { Link(entry.title, destination: url) }
-                        else { Text(entry.title) }
-                        if let price = entry.currentPrice {
-                            Text(price.formatted + (price.isVerified ? "" : " · Unverified")).font(.subheadline)
+            if !entries.isEmpty {
+                Section(format.entries) {
+                    ForEach(entries) { entry in
+                        VStack(alignment: .leading) {
+                            if let url = WantJSON.webURL(entry.link) { Link(entry.title, destination: url) }
+                            else { Text(entry.title) }
+                            if let price = entry.currentPrice {
+                                Text(price.formatted + (price.isVerified ? "" : " · Unverified")).font(.subheadline)
+                            }
                         }
                     }
                 }
@@ -208,6 +210,7 @@ private struct WantsSubmission: View {
     var options: [String] = []
     let submit: (String) async throws -> Void
     @State private var draft = ""
+    @FocusState private var editing: Bool
     @State private var busy = false
     @State private var error: String?
 
@@ -215,7 +218,7 @@ private struct WantsSubmission: View {
         ForEach(options, id: \.self) { option in
             Button(option) { send(option) }.disabled(busy)
         }
-        TextField(placeholder, text: $draft, axis: .vertical).disabled(busy)
+        TextField(placeholder, text: $draft, axis: .vertical).focused($editing).disabled(busy)
         Button(title) { send(draft) }
             .disabled(busy || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         if let error { Text(error).font(.footnote).foregroundStyle(.secondary) }
@@ -224,6 +227,7 @@ private struct WantsSubmission: View {
     private func send(_ text: String) {
         guard !busy else { return }
         busy = true
+        editing = false
         error = nil
         Task {
             defer { busy = false }
