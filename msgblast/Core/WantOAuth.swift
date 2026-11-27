@@ -32,6 +32,17 @@ public struct WantCredential: Codable, Equatable, Sendable {
 /// metadata, then the authorization server's metadata, Dynamic Client Registration as a native
 /// app with a loopback redirect, and the MCP server as the `resource`.
 public enum WantOAuth {
+    public static var checkHeaders: [String: String] {
+        ProcessInfo.processInfo.arguments.contains("--wants-integration-check") ? ["x-wantmcp-check": "1"] : [:]
+    }
+    public static let network: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.httpAdditionalHeaders = checkHeaders
+        return URLSession(configuration: config)
+    }()
+    public static let resource = URL(string: "https://mcp.wantmcp.com/mcp")!
+    public static let keyPage = URL(string: "https://wantmcp.com/connect/key?app=msgblast")!
+
     public struct Server: Equatable, Sendable {
         public var issuer: String, authorizationEndpoint: URL, tokenEndpoint: URL, registrationEndpoint: URL?
         /// The resource's scopes, plus `offline_access` when offered so the grant can be refreshed.
@@ -46,7 +57,7 @@ public enum WantOAuth {
         return URL(string: String(header[range.upperBound...].prefix { $0 != "\"" }))
     }
 
-    public static func discover(resource: URL, hint: URL?, session: URLSession = .shared) async throws -> Server {
+    public static func discover(resource: URL, hint: URL?, session: URLSession = WantOAuth.network) async throws -> Server {
         guard WantMCPClient.allowsEndpoint(resource) else { throw WantError.server("Use an HTTPS Want MCP endpoint, or HTTP on localhost.") }
         var origin = URLComponents(url: resource, resolvingAgainstBaseURL: false)!
         origin.path = ""; origin.query = nil
@@ -71,7 +82,7 @@ public enum WantOAuth {
 
     /// Registers msgblast and returns its client id. The loopback redirect is registered without its port,
     /// which the server accepts on any port at authorization time (RFC 8252 section 7.3).
-    public static func register(_ server: Server, redirect: URL, session: URLSession = .shared) async throws -> String {
+    public static func register(_ server: Server, redirect: URL, session: URLSession = WantOAuth.network) async throws -> String {
         guard let endpoint = server.registrationEndpoint, WantMCPClient.allowsEndpoint(endpoint) else { throw WantError.server("The Want MCP does not accept new apps yet.") }
         let body: [String: Any] = ["client_name": "msgblast", "client_uri": "https://github.com/contains-studio/msgblast", "application_type": "native",
                                    "redirect_uris": [portless(redirect)], "grant_types": ["authorization_code", "refresh_token"],
@@ -108,7 +119,7 @@ public enum WantOAuth {
 
     /// Exchanges the callback's code. Checks `state`, and `iss` when the server sends it.
     public static func exchange(callback: URL, server: Server, clientID: String, redirect: URL, pkce: PKCE, resource: URL,
-                                session: URLSession = .shared) async throws -> WantCredential {
+                                session: URLSession = WantOAuth.network) async throws -> WantCredential {
         let query = Dictionary(URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems?.map { ($0.name, $0.value ?? "") } ?? [], uniquingKeysWith: { a, _ in a })
         guard query["state"] == pkce.state, query["iss"].map({ $0 == server.issuer }) ?? !server.requiresIssuer else { throw WantError.server("Sign-in did not match this request. Try again.") }
         guard let code = query["code"] else { throw WantError.server(query["error_description"] ?? query["error"] ?? "Sign-in was cancelled.") }
@@ -118,7 +129,7 @@ public enum WantOAuth {
         ], session: session)
     }
 
-    public static func refresh(_ credential: WantCredential, resource: URL, session: URLSession = .shared) async throws -> WantCredential {
+    public static func refresh(_ credential: WantCredential, resource: URL, session: URLSession = WantOAuth.network) async throws -> WantCredential {
         guard let clientID = credential.clientID, let endpoint = credential.tokenEndpoint, let refresh = credential.refreshToken else { throw WantError.unauthorized(resourceMetadata: nil) }
         var next = try await token(endpoint, clientID: clientID, form: ["grant_type": "refresh_token", "refresh_token": refresh,
                                                                          "client_id": clientID, "resource": resource.absoluteString], session: session)

@@ -86,7 +86,7 @@ private struct WantsSignInView: View {
                 HStack { ProgressView().controlSize(.small); Text("Finish setting up The Want MCP in your browser.") }
                 Button("Cancel") { wants.cancelSignIn() }
             } else {
-                Button("Set up The Want MCP") { Task { await wants.signIn() } }.buttonStyle(.borderedProminent).controlSize(.large)
+                Button("Connect with The Want MCP") { Task { await wants.signIn() } }.buttonStyle(.borderedProminent).controlSize(.large)
                 if showingKey {
                     HStack {
                         SecureField("wk_…", text: $key).textFieldStyle(.roundedBorder).frame(width: 260)
@@ -94,7 +94,7 @@ private struct WantsSignInView: View {
                             if wants.useWriteKey(key) { key = "" }
                         }.disabled(key.isEmpty)
                     }
-                    Text("On wantmcp.com, open a list's settings, then Agents › Add another agent.").font(.callout).foregroundStyle(.secondary)
+                    Link("Get a list key", destination: WantOAuth.keyPage).font(.callout).foregroundStyle(.secondary)
                 } else {
                     Button("I already have a list key") { showingKey = true }.buttonStyle(.link)
                 }

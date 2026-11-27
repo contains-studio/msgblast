@@ -25,6 +25,7 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>msgblast</string>
+				<string>app.msgblast</string>
 			</array>
 		</dict>
 	</array>

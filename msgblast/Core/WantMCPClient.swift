@@ -47,7 +47,7 @@ public struct WantMCPClient: WantService {
     private let session: URLSession
     private let version: String
 
-    public init(endpoint: URL, session: URLSession = .shared, version: String = "dev", token: @escaping @Sendable () async throws -> String?) {
+    public init(endpoint: URL, session: URLSession = WantOAuth.network, version: String = "dev", token: @escaping @Sendable () async throws -> String?) {
         self.endpoint = endpoint; self.session = session; self.version = version; self.token = token
     }
 

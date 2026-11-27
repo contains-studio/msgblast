@@ -1,30 +1,32 @@
 import SwiftUI
+import AuthenticationServices
 import msgblastMobileKit
 
 struct MobileWantsView: View {
-    @State private var key: String?
+    @Environment(\.webAuthenticationSession) private var authentication
+    @State private var connection: MobileWantConnection?
+    @State private var operation: Task<Void, Never>?
     @State private var draft = ""
     @FocusState private var editingKey: Bool
     @State private var showingKeyForm = false
-    @State private var showingWantsSite = false
     @State private var replacingKey = false
     @State private var keyRejected = false
     @State private var connecting = false
     @State private var error: String?
 
-    static func client(_ key: String) -> WantMCPClient {
-        WantMCPClient(endpoint: URL(string: "https://mcp.wantmcp.com/mcp")!) { key }
+    private func client(_ connection: MobileWantConnection) -> WantMCPClient {
+        WantMCPClient(endpoint: WantOAuth.resource) { try await connection.token() }
     }
 
     var body: some View {
         Group {
-            if let key, !replacingKey {
-                WantsLists(client: Self.client(key)) {
+            if let connection, !replacingKey {
+                WantsLists(client: client(connection)) {
                     replacingKey = true
                     editingKey = true
                     keyRejected = true
                 }
-                    .id(key)
+                    .id(connection.id)
                     .toolbar {
                         Button("Disconnect", systemImage: "person.crop.circle.badge.minus") {
                             disconnect()
@@ -33,7 +35,7 @@ struct MobileWantsView: View {
             } else if showingKeyForm || replacingKey {
                 Form {
                     Section {
-                        if keyRejected { Text("This list key was rejected. Paste a new key from your list’s settings.").foregroundStyle(.secondary) }
+                        if keyRejected { Text("This list key was rejected. Get a new key or connect again.").foregroundStyle(.secondary) }
                         SecureField("List write key", text: $draft)
                             .focused($editingKey)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -46,9 +48,9 @@ struct MobileWantsView: View {
                             draft = ""
                         }.disabled(connecting)
                     } footer: {
-                        Text("In your list’s settings, open Agents and create a key for msgblast. Paste the wk_ key here.")
+                        Text("Choose a list on The Want MCP, create a key for msgblast, then paste it here.")
                     }
-                    WantsBrowserLink(destination: URL(string: "https://wantmcp.com/app")!) { Text("Get a list key on Wants") }
+                    WantsBrowserLink(destination: WantOAuth.keyPage) { Text("Get a list key") }
                 }
             } else {
                 ScrollView {
@@ -60,9 +62,9 @@ struct MobileWantsView: View {
                         Text("Make a list of things to buy, tasks to finish, or questions to answer. Give it to an agent, then review the products, updates, or answers it brings back.")
                             .foregroundStyle(.secondary)
                         Button {
-                            showingWantsSite = true
+                            operation = Task { await signIn() }
                         } label: {
-                            Text("Set up The Want MCP").frame(maxWidth: .infinity)
+                            Text("Connect with The Want MCP").frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent).controlSize(.large).padding(.top, 12)
                         Button("I already have a list key") { showingKeyForm = true }
@@ -70,24 +72,59 @@ struct MobileWantsView: View {
                     }
                     .frame(maxWidth: 420).padding(24).frame(maxWidth: .infinity)
                 }
-                .sheet(isPresented: $showingWantsSite, onDismiss: { showingKeyForm = true }) {
-                    SafariView(url: URL(string: "https://wantmcp.com/app")!).ignoresSafeArea()
-                }
+                .disabled(connecting)
             }
         }
         .navigationTitle("Wants")
         .onAppear {
-            do { key = try WantsKeychain.read() } catch { self.error = error.localizedDescription }
+            guard connection == nil else { return }
+            do { connection = try WantsKeychain.read().map(MobileWantConnection.init) } catch { self.error = error.localizedDescription }
         }
+        .onDisappear { operation?.cancel() }
         .alert("Wants connection", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK") { error = nil }
         } message: { Text(error ?? "") }
     }
 
+    private func signIn() async {
+        guard !connecting else { return }
+        connecting = true
+        defer { connecting = false }
+        do {
+            let resource = WantOAuth.resource
+            let redirect = URL(string: "app.msgblast:/oauth")!
+            let server = try await WantOAuth.discover(resource: resource, hint: nil)
+            guard server.issuer == "https://mcp.wantmcp.com" else { throw WantError.invalidResponse }
+            let defaults = UserDefaults.standard
+            let registration = "WantsMobileOAuthClientID"
+            let clientID: String
+            if let saved = defaults.string(forKey: registration) { clientID = saved }
+            else {
+                clientID = try await WantOAuth.register(server, redirect: redirect)
+                defaults.set(clientID, forKey: registration)
+            }
+            let pkce = WantOAuth.PKCE()
+            let url = WantOAuth.authorizeURL(server, clientID: clientID, redirect: redirect, pkce: pkce, resource: resource)
+            try Task.checkCancellation()
+            let back = try await authentication.authenticate(using: url, callback: .customScheme("app.msgblast"),
+                                                              preferredBrowserSession: .shared, additionalHeaderFields: WantOAuth.checkHeaders)
+            var parts = URLComponents(url: back, resolvingAgainstBaseURL: false)
+            let issuer = parts?.queryItems?.filter { $0.name == "iss" }
+            parts?.query = nil
+            guard parts?.url == redirect, issuer?.count == 1, issuer?.first?.value == server.issuer else { throw WantError.invalidResponse }
+            let grant = try await WantOAuth.exchange(callback: back, server: server, clientID: clientID, redirect: redirect, pkce: pkce, resource: resource)
+            try Task.checkCancellation()
+            try WantsKeychain.save(grant)
+            connection = MobileWantConnection(grant)
+        } catch is CancellationError {
+        } catch ASWebAuthenticationSessionError.canceledLogin {
+        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+    }
+
     private func disconnect() {
         do {
             try WantsKeychain.remove()
-            key = nil
+            connection = nil
             showingKeyForm = false
             draft = ""
             keyRejected = false
@@ -100,11 +137,11 @@ struct MobileWantsView: View {
         connecting = true
         defer { connecting = false }
         do {
-            _ = try await Self.client(credential.accessToken).writableListIDs()
-            try WantsKeychain.save(credential.accessToken)
+            _ = try await client(MobileWantConnection(credential)).writableListIDs()
+            try WantsKeychain.save(credential)
             draft = ""
             keyRejected = false
-            key = credential.accessToken
+            connection = MobileWantConnection(credential)
             replacingKey = false
         } catch WantError.unauthorized {
             keyRejected = true
