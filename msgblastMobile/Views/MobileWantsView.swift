@@ -82,8 +82,7 @@ struct MobileWantsView: View {
         .sheet(isPresented: $startingList) {
             StartWantListSheet { title, format in
                 let grant = try await WantClaim.start(title: title, format: format)
-                try WantsKeychain.save(grant)
-                connection = MobileWantConnection(grant)
+                connection = try MobileWantConnection.install(grant)
             }
         }
         .navigationTitle("Wants")
@@ -125,8 +124,7 @@ struct MobileWantsView: View {
             guard parts?.url == redirect, issuer?.count == 1, issuer?.first?.value == server.issuer else { throw WantError.invalidResponse }
             let grant = try await WantOAuth.exchange(callback: back, server: server, clientID: clientID, redirect: redirect, pkce: pkce, resource: resource)
             try Task.checkCancellation()
-            try WantsKeychain.save(grant)
-            connection = MobileWantConnection(grant)
+            connection = try MobileWantConnection.install(grant)
         } catch is CancellationError {
         } catch ASWebAuthenticationSessionError.canceledLogin {
         } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
@@ -148,11 +146,11 @@ struct MobileWantsView: View {
         connecting = true
         defer { connecting = false }
         do {
-            _ = try await client(MobileWantConnection(credential)).writableListIDs()
-            try WantsKeychain.save(credential)
+            let candidate = WantMCPClient(endpoint: WantOAuth.resource) { credential.accessToken }
+            _ = try await candidate.writableListIDs()
+            connection = try MobileWantConnection.install(credential)
             draft = ""
             keyRejected = false
-            connection = MobileWantConnection(credential)
             replacingKey = false
         } catch WantError.unauthorized {
             keyRejected = true

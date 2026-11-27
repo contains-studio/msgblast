@@ -5,6 +5,7 @@ import Network
 /// What msgblast keeps in the Keychain for The Want MCP: an OAuth grant for the lists the
 /// person ticked, or a pasted write key for one list.
 public struct WantCredential: Codable, Equatable, Sendable {
+    public var accessCursor: Int?
     public var removedLists: Set<String>?
     public var claim: WantClaim?
     public var grantID: UUID?
@@ -135,6 +136,7 @@ public enum WantOAuth {
         guard let clientID = credential.clientID, let endpoint = credential.tokenEndpoint, let refresh = credential.refreshToken else { throw WantError.unauthorized(resourceMetadata: nil) }
         var next = try await token(endpoint, clientID: clientID, form: ["grant_type": "refresh_token", "refresh_token": refresh,
                                                                          "client_id": clientID, "resource": resource.absoluteString], session: session)
+        next.accessCursor = credential.accessCursor
         next.removedLists = credential.removedLists
         next.claim = credential.claim
         next.refreshToken = next.refreshToken ?? refresh
@@ -143,9 +145,11 @@ public enum WantOAuth {
 
     private actor Backoff {
         var deadlines: [String: Date] = [:]
-        func wait(for host: String) async throws {
+        func wait(for host: String, mayWait: Bool) async throws {
             while let deadline = deadlines[host], deadline > Date() {
-                try await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow)))
+                let delay = max(0, deadline.timeIntervalSinceNow)
+                guard mayWait else { throw WantError.unavailable(retryAfter: delay) }
+                try await Task.sleep(for: .seconds(delay))
             }
         }
         func postpone(_ host: String, seconds: TimeInterval) {
@@ -154,18 +158,37 @@ public enum WantOAuth {
     }
     private static let backoff = Backoff()
 
-    static func transmit(_ request: URLRequest, session: URLSession) async throws -> (Data, HTTPURLResponse) {
-        let host = request.url?.host ?? ""
+    static func retryDelay(_ header: String?, now: Date = Date()) -> TimeInterval {
+        guard let header else { return 60 }
+        if let seconds = UInt32(header) { return TimeInterval(seconds) }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        for format in ["EEE, dd MMM yyyy HH:mm:ss 'GMT'", "EEEE, dd-MMM-yy HH:mm:ss 'GMT'", "EEE MMM d HH:mm:ss yyyy"] {
+            formatter.dateFormat = format
+            if let date = formatter.date(from: header) { return max(0, date.timeIntervalSince(now)) }
+        }
+        return 60
+    }
+
+    static func transmit(_ input: URLRequest, session: URLSession, retryUnavailable: Bool = false,
+                         bearer: (@Sendable () async throws -> String?)? = nil) async throws -> (Data, HTTPURLResponse, String?) {
+        let host = input.url?.host ?? ""
+        var original: String?
         for attempt in 0...1 {
-            try await backoff.wait(for: host)
+            try await backoff.wait(for: host, mayWait: retryUnavailable)
+            var request = input
+            let current = try await bearer?()
+            guard attempt == 0 || original == current else { throw CancellationError() }
+            original = current
+            if let current { request.setValue("Bearer \(current)", forHTTPHeaderField: "Authorization") }
             try Task.checkCancellation()
             let (data, response) = try await session.data(for: request, delegate: WantRedirectPolicy())
             guard let http = response as? HTTPURLResponse else { throw WantError.invalidResponse }
-            guard http.statusCode == 503 || http.statusCode == 429 else { return (data, http) }
-            let seconds = http.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init)
-            let delay = seconds.flatMap { $0.isFinite && $0 >= 0 && $0 <= Double(Int32.max) ? $0 : nil } ?? 60
+            guard http.statusCode == 503 || http.statusCode == 429 else { return (data, http, current) }
+            let delay = retryDelay(http.value(forHTTPHeaderField: "Retry-After"))
             await backoff.postpone(host, seconds: delay)
-            if attempt == 1 { throw WantError.unavailable(retryAfter: delay) }
+            guard retryUnavailable, attempt == 0 else { throw WantError.unavailable(retryAfter: delay) }
         }
         throw WantError.invalidResponse
     }
@@ -176,7 +199,7 @@ public enum WantOAuth {
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         var allowed = CharacterSet.urlQueryAllowed; allowed.remove(charactersIn: "+&=")
         request.httpBody = Data(form.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: allowed) ?? "")" }.joined(separator: "&").utf8)
-        let (data, response) = try await transmit(request, session: session)
+        let (data, response, _) = try await transmit(request, session: session)
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw WantError.invalidResponse }
         guard response.statusCode == 200, let access = json["access_token"] as? String else {
             if json["error"] as? String == "invalid_grant", form["grant_type"] == "refresh_token" { throw WantError.unauthorized(resourceMetadata: nil) }

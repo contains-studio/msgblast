@@ -170,7 +170,9 @@ public struct WantMCPClient: WantService {
         request.setValue(Self.protocolVersion, forHTTPHeaderField: "MCP-Protocol-Version")
         request.setValue(method, forHTTPHeaderField: "Mcp-Method")
         if method == "tools/call" || method.hasPrefix("events/"), let name = params["name"] as? String { request.setValue(name, forHTTPHeaderField: "Mcp-Name") }
-        let (data, http) = try await authenticated(request)
+        let readTools = ["whoami", "get_list", "get_item_entries", "get_comments", "list_pending_suggestions"]
+        let readOnly = method == "events/poll" || (method == "tools/call" && readTools.contains(params["name"] as? String ?? ""))
+        let (data, http) = try await authenticated(request, retryUnavailable: readOnly)
         let message = try Self.message(data, contentType: http.value(forHTTPHeaderField: "Content-Type"), id: id)
         if let error = message["error"] as? [String: Any] { throw WantError.server(error["message"] as? String ?? "The Want MCP refused the request") }
         guard (200..<300).contains(http.statusCode), let result = message["result"] as? [String: Any] else { throw WantError.invalidResponse }
@@ -181,24 +183,26 @@ public struct WantMCPClient: WantService {
         guard endpoint == WantOAuth.resource else { throw WantError.invalidResponse }
         var url = URLComponents(string: "https://api.wantmcp.com/v1/me/events")!
         url.queryItems = [.init(name: "after", value: String(cursor)), .init(name: "types", value: "list.claimed,access.removed")]
-        let (data, http) = try await authenticated(URLRequest(url: url.url!))
+        let (data, http) = try await authenticated(URLRequest(url: url.url!), retryUnavailable: true)
         guard http.statusCode == 200 else { throw WantError.invalidResponse }
-        return try WantJSON.decoder.decode(WantAccessPage.self, from: data)
+        let page = try WantJSON.decoder.decode(WantAccessPage.self, from: data)
+        guard page.events.contains(where: { $0.type == "access.removed" }) else { return page }
+        // A new consent can restore a list while its older removal is still in the feed.
+        let writable = Set(try await writableListIDs())
+        let current = page.events.filter { $0.type != "access.removed" || !writable.contains($0.listId) }
+        return WantAccessPage(events: current, next: page.next)
     }
 
-    private func authenticated(_ input: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        var request = input
-        let bearer = try await token()
-        if let bearer { request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization") }
-        var (data, http) = try await WantOAuth.transmit(request, session: session)
-        if http.statusCode == 401, let bearer, let renew {
-            let fresh = try await renew(bearer)
-            request.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
-            (data, http) = try await WantOAuth.transmit(request, session: session)
+    private func authenticated(_ input: URLRequest, retryUnavailable: Bool) async throws -> (Data, HTTPURLResponse) {
+        var (data, http, bearer) = try await WantOAuth.transmit(input, session: session, retryUnavailable: retryUnavailable, bearer: token)
+        if http.statusCode == 401, let refused = bearer, let renew {
+            (data, http, bearer) = try await WantOAuth.transmit(input, session: session, retryUnavailable: retryUnavailable) {
+                try await renew(refused)
+            }
         }
         if http.statusCode == 403 { throw WantError.server("The Want MCP did not allow that request.") }
         if http.statusCode == 401 {
-            guard try await token() == request.value(forHTTPHeaderField: "Authorization").map({ String($0.dropFirst(7)) }) else { throw CancellationError() }
+            guard try await token() == bearer else { throw CancellationError() }
             throw WantError.unauthorized(resourceMetadata: WantOAuth.resourceMetadata(http.value(forHTTPHeaderField: "WWW-Authenticate")))
         }
         return (data, http)

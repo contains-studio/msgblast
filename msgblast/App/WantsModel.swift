@@ -293,6 +293,7 @@ import msgblastRemoteProtocol
             var next = try await WantOAuth.refresh(credential, resource: keychain.endpoint)
             guard session == generation else { throw CancellationError() }
             next.grantID = credential.grantID
+            next.accessCursor = self.credential?.accessCursor
             next.removedLists = self.credential?.removedLists
             next.claim = self.credential?.claim
             guard keychain.save(next) else { throw WantError.server("msgblast could not save your refreshed sign-in to the Keychain.") }
@@ -389,8 +390,8 @@ import msgblastRemoteProtocol
     // MARK: Events
 
     private func followAccess(_ client: WantMCPClient, generation: Int) async {
-        var cursor = 0
         while !Task.isCancelled, session == generation {
+            let cursor = credential?.accessCursor ?? 0
             var delay: TimeInterval = 60
             do {
                 let page = try await client.accessEvents(after: cursor)
@@ -403,8 +404,7 @@ import msgblastRemoteProtocol
                     credential = next
                     objectWillChange.send()
                 }
-                if page.next > cursor && !page.events.isEmpty { delay = 0 }
-                cursor = max(cursor, page.next)
+                if page.next > cursor { delay = 0 }
             } catch WantError.unavailable(let seconds) { delay = max(seconds, delay) }
             catch { if session == generation { fail(error) } }
             try? await Task.sleep(for: .seconds(delay))

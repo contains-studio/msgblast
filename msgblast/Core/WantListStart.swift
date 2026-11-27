@@ -39,6 +39,8 @@ public struct WantAccessPage: Decodable, Sendable {
 
 public extension WantCredential {
     mutating func apply(_ page: WantAccessPage) {
+        guard page.next > (accessCursor ?? 0) else { return }
+        accessCursor = page.next
         for event in page.events {
             switch event.type {
             case "access.removed":

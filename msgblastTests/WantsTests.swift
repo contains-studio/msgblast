@@ -52,6 +52,82 @@ final class WantsTests: XCTestCase {
         XCTAssertEqual(received, ["Bearer original", "Bearer original", "Bearer rotated"])
     }
 
+    func testServiceUnavailableDoesNotReplayWritesOrTokenRotation() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [WantStub.self]
+        let session = URLSession(configuration: config)
+        let client = WantMCPClient(endpoint: endpoint, session: session) { "fixture" }
+        let grant = WantCredential(accessToken: "original", refreshToken: "single-use", clientID: "native", tokenEndpoint: endpoint)
+        for status in [503, 429] {
+            var calls = 0
+            WantStub.handler = { _ in
+                calls += 1
+                return (status, ["Retry-After": "0"], Data())
+            }
+            do {
+                _ = try await client.addItem(listID: "fixture", text: "one item")
+                XCTFail("Expected an outage")
+            } catch WantError.unavailable { }
+            XCTAssertEqual(calls, 1)
+            do {
+                _ = try await WantOAuth.refresh(grant, resource: endpoint, session: session)
+                XCTFail("Expected an outage")
+            } catch WantError.unavailable { }
+            XCTAssertEqual(calls, 2)
+        }
+    }
+
+    func testActiveCooldownDoesNotQueueNewWritesOrTokenRotation() async throws {
+        let url = URL(string: "https://cooldown.wantmcp.test/mcp")!
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [WantStub.self]
+        let session = URLSession(configuration: config)
+        let client = WantMCPClient(endpoint: url, session: session) { "fixture" }
+        var requests = 0
+        WantStub.handler = { _ in
+            requests += 1
+            return (503, ["Retry-After": "1"], Data())
+        }
+        for _ in 0..<2 {
+            do { _ = try await client.addItem(listID: "fixture", text: "item"); XCTFail("Expected cooldown") }
+            catch WantError.unavailable { }
+        }
+        let grant = WantCredential(accessToken: "token", refreshToken: "refresh", clientID: "client", tokenEndpoint: url)
+        do { _ = try await WantOAuth.refresh(grant, resource: url, session: session); XCTFail("Expected cooldown") }
+        catch WantError.unavailable { }
+        XCTAssertEqual(requests, 1)
+    }
+
+    func testReadRetryRechecksCredentialBeforeDispatch() async throws {
+        actor Grant {
+            var active = true
+            func take() throws -> String {
+                guard active else { throw CancellationError() }
+                active = false
+                return "fixture"
+            }
+        }
+        let grant = Grant()
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [WantStub.self]
+        var requests = 0
+        WantStub.handler = { _ in
+            requests += 1
+            return (503, ["Retry-After": "0"], Data())
+        }
+        let client = WantMCPClient(endpoint: endpoint, session: URLSession(configuration: config)) { try await grant.take() }
+        do { _ = try await client.writableListIDs(); XCTFail("Expected the disconnected grant to cancel") }
+        catch is CancellationError { }
+        XCTAssertEqual(requests, 1)
+    }
+
+    func testRetryAfterHTTPDateUsesServerDeadline() {
+        let now = Date(timeIntervalSince1970: 784111767)
+        XCTAssertEqual(WantOAuth.retryDelay("Sun, 06 Nov 1994 08:49:37 GMT", now: now), 10)
+        XCTAssertEqual(WantOAuth.retryDelay("Sun, 06 Nov 1994 08:49:17 GMT", now: now), 0)
+        XCTAssertEqual(WantOAuth.retryDelay("30", now: now), 30)
+    }
+
     func testPublicClientExchangesBothNativeRedirectsAndRefreshes() async throws {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [WantStub.self]
@@ -93,7 +169,7 @@ final class WantsTests: XCTestCase {
         grant.endpoint = endpoint
         grant.claim = WantClaim(listID: "owned", url: URL(string: "https://wantmcp.com/claim/example")!, expiresAt: expiry)
         func apply(_ type: String, _ list: String) throws {
-            let data = try JSONSerialization.data(withJSONObject: ["events": [["type": type, "list_id": list]], "next": 27])
+            let data = try JSONSerialization.data(withJSONObject: ["events": [["type": type, "list_id": list]], "next": (grant.accessCursor ?? 0) + 1])
             grant.apply(try WantJSON.decoder.decode(WantAccessPage.self, from: data))
         }
         try apply("access.removed", "other")
@@ -101,7 +177,28 @@ final class WantsTests: XCTestCase {
         try apply("list.claimed", "owned")
         XCTAssertNil(grant.claim)
         XCTAssertEqual(grant.accessToken, "test")
-        XCTAssertEqual(WantCredential.restore(try JSONEncoder().encode(grant), for: endpoint)?.removedLists, ["other"])
+        let restored = WantCredential.restore(try JSONEncoder().encode(grant), for: endpoint)
+        XCTAssertEqual(restored?.removedLists, ["other"])
+        XCTAssertEqual(restored?.accessCursor, 2)
+    }
+
+    func testReconnectingSkipsHistoricalRemovalForAListTheGrantCanWriteAgain() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [WantStub.self]
+        let client = WantMCPClient(endpoint: WantOAuth.resource, session: URLSession(configuration: config)) { "fixture" }
+        WantStub.handler = { request in
+            if request.url?.path == "/v1/me/events" {
+                let events = ["restored", "lost"].map { ["type": "access.removed", "list_id": $0] }
+                let data = try! JSONSerialization.data(withJSONObject: ["events": events, "next": 36])
+                return (200, [:], data)
+            }
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Mcp-Name"), "whoami")
+            return self.reply(["structuredContent": ["kind": "agent", "writable_lists": [["id": "restored"]]]], to: request)
+        }
+        var grant = WantCredential(accessToken: "fixture")
+        grant.apply(try await client.accessEvents(after: 0))
+        XCTAssertEqual(grant.removedLists, ["lost"])
+        XCTAssertEqual(grant.accessCursor, 36)
     }
 
     func testToolCallCarriesProtocolVersionClientAndEventsCapability() async throws {

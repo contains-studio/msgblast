@@ -54,14 +54,26 @@ public enum WantsKeychain {
     @Published public private(set) var revoked = false
     private var observers = 0
     private var monitoring: Task<Void, Never>?
-    private var cursor = 0
     public let id = UUID()
     @Published public private(set) var grant: WantCredential
     private var refreshing: Task<String, Error>?
 
     public init(_ grant: WantCredential) { self.grant = grant; removed = grant.removedLists ?? [] }
 
+    public static func install(_ credential: WantCredential) throws -> MobileWantConnection {
+        var credential = credential
+        credential.grantID = UUID()
+        try WantsKeychain.save(credential)
+        return MobileWantConnection(credential)
+    }
+
+    private func checkCurrent() throws {
+        guard !revoked, let saved = try WantsKeychain.read(),
+              saved.grantID == grant.grantID, saved.accessToken == grant.accessToken else { throw CancellationError() }
+    }
+
     public func renew(_ refused: String) async throws -> String {
+        try checkCurrent()
         guard grant.accessToken == refused else { return grant.accessToken }
         guard grant.refreshToken != nil else { throw WantError.unauthorized(resourceMetadata: nil) }
         return try await refresh()
@@ -82,6 +94,7 @@ public enum WantsKeychain {
 
     private func monitor(client: WantMCPClient) async {
         while !Task.isCancelled && !revoked {
+            let cursor = grant.accessCursor ?? 0
             var delay: TimeInterval = 60
             do {
                 let page = try await client.accessEvents(after: cursor)
@@ -90,12 +103,11 @@ public enum WantsKeychain {
                 next.apply(page)
                 if let lost = next.removedLists, removed != lost { removed.formUnion(lost) }
                 if next != grant {
-                    guard try WantsKeychain.read()?.accessToken == grant.accessToken else { return }
+                    try checkCurrent()
                     try WantsKeychain.save(next)
                     grant = next
                 }
-                if page.next > cursor && !page.events.isEmpty { delay = 0 }
-                cursor = max(cursor, page.next)
+                if page.next > cursor { delay = 0 }
             } catch WantError.unauthorized { revoked = true; return }
             catch WantError.unavailable(let seconds) { delay = max(delay, seconds) }
             catch { }
@@ -104,18 +116,25 @@ public enum WantsKeychain {
     }
 
     public func token() async throws -> String {
+        try checkCurrent()
         guard grant.refreshToken != nil, let expiry = grant.expiresAt,
               expiry <= Date().addingTimeInterval(60) else { return grant.accessToken }
         return try await refresh()
     }
 
     public func refresh() async throws -> String {
-        if let refreshing { return try await refreshing.value }
+        if let refreshing {
+            let token = try await refreshing.value
+            try checkCurrent()
+            return token
+        }
         let previous = grant
         let task = Task {
             var next = try await WantOAuth.refresh(previous, resource: WantOAuth.resource)
-            guard try WantsKeychain.read()?.accessToken == previous.accessToken else { throw CancellationError() }
+            try checkCurrent()
+            guard previous.accessToken == grant.accessToken else { throw CancellationError() }
             next.claim = grant.claim
+            next.accessCursor = grant.accessCursor
             next.removedLists = grant.removedLists
             next.grantID = previous.grantID
             try WantsKeychain.save(next)
@@ -124,6 +143,8 @@ public enum WantsKeychain {
         }
         refreshing = task
         defer { refreshing = nil }
-        return try await task.value
+        let token = try await task.value
+        try checkCurrent()
+        return token
     }
 }
