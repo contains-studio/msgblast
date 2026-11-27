@@ -59,10 +59,17 @@ public struct WantMCPClient: WantService {
         return (identity.writableLists ?? []).map(\.id)
     }
     public func list(_ id: String) async throws -> WantList {
+        try await list(id, full: false)
+    }
+
+    public func list(_ id: String, full: Bool) async throws -> WantList {
         var list: WantList?, cursor: String?
         var seen: Set<String> = []
         repeat {
-            let content = try await tool("get_list", cursor.map { ["list": id, "cursor": $0] } ?? ["list": id]) as? [String: Any] ?? [:]
+            var arguments = ["list": id]
+            arguments["cursor"] = cursor
+            if full { arguments["detail"] = "full" }
+            let content = try await tool("get_list", arguments) as? [String: Any] ?? [:]
             // The compact read may nest the list's own fields under `list`.
             let fields = (content["list"] as? [String: Any] ?? [:]).merging(content) { _, page in page }
             let page = try decode(WantList.self, fields)

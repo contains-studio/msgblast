@@ -55,6 +55,7 @@ public struct WantEntry: Codable, Hashable, Identifiable, Sendable {
     public var id: String, itemId: String, listId: String, url: String, status: String
     /// `product_url` is null on task and research lists, whose entries carry `links` instead.
     public var author: WantActor, title: String, productUrl: String?, imageUrl: String?, retailer: String
+    public var description: String?
     public var links: [String]?
     public var currentPrice: WantPrice?, createdAt: Date
     public var link: String? { productUrl ?? links?.first }
@@ -73,7 +74,7 @@ public struct WantItem: Codable, Hashable, Identifiable, Sendable {
         public var entryId: String, price: String, currency: String
         public var formatted: String { WantPrice.format(price, currency: currency) }
     }
-    public var bestPrice: BestPrice?, dueAt: Date?
+    public var bestPrice: BestPrice?, dueAt: Date?, statusNote: String?
     public var purchase: Finish?, completion: Finish?
     public var isFinished: Bool { status == "done" || purchase != nil || completion != nil }
     public var details: String?, detailsPreview: String?, status: String?, claimedBy: WantActor?

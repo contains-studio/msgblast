@@ -390,6 +390,12 @@ private struct WantsItemDetail: View {
                 Text(item.text).font(.title2.bold()).accessibilityAddTraits(.isHeader)
                 if let details = item.details ?? item.detailsPreview, !details.isEmpty { Text(details) }
             }
+            if format != .shopping, item.claimedBy != nil || item.statusNote?.isEmpty == false {
+                Section(item.isFinished ? format.finished : "Activity") {
+                    if let owner = item.claimedBy { Label(owner.label, systemImage: "person") }
+                    if let note = item.statusNote, !note.isEmpty { Text(note) }
+                }
+            }
             if let question = item.openQuestion {
                 Section(WantFormat.waiting) {
                     if let author = question.askedBy { Text(author.label).font(.caption).foregroundStyle(.secondary) }
@@ -403,20 +409,15 @@ private struct WantsItemDetail: View {
                 }
             }
             if let entries, !entries.isEmpty {
-                Section(format.entries) {
-                    ForEach(entries) { entry in
-                        if let url = WantJSON.webURL(entry.link) {
-                            WantsBrowserLink(destination: url) { entryLabel(entry) }
-                                .buttonStyle(.plain)
-                        } else {
-                            entryLabel(entry)
-                        }
+                Section(format == .shopping ? "Products" : format.entries) {
+                    ForEach(displayOrder(entries)) { entry in
+                        entryRow(entry)
                     }
                 }
             }
             if entries?.isEmpty == true && error == nil && item.openQuestion == nil {
                 Section {
-                    Text("No \(format.entries.lowercased()) yet").foregroundStyle(.secondary)
+                    Text(format == .shopping ? "No products yet" : "No \(format.entries.lowercased()) yet").foregroundStyle(.secondary)
                     if let itemURL { WantsBrowserLink(destination: itemURL) { Text("Open item on Wants") } }
                 }
             }
@@ -428,12 +429,62 @@ private struct WantsItemDetail: View {
         .refreshable { await refresh() }
     }
 
+    private func entryRow(_ entry: WantEntry) -> some View {
+        VStack(alignment: .leading, spacing: Space.gap) {
+            if format == .shopping {
+                if let url = WantJSON.webURL(entry.productUrl) {
+                    WantsBrowserLink(destination: url) { entryLabel(entry) }.buttonStyle(.plain)
+                } else { entryLabel(entry) }
+            } else {
+                writtenEntry(entry)
+            }
+            ForEach(Array((entry.links ?? []).enumerated()), id: \.offset) { _, address in
+                if let url = WantJSON.webURL(address) {
+                    WantsBrowserLink(destination: url) {
+                        Label((url.host() ?? url.absoluteString) + url.path,
+                              systemImage: "link")
+                            .lineLimit(2).frame(minHeight: 44, alignment: .leading)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Open source \(url.absoluteString)")
+                }
+            }
+            ForEach(comments.filter { $0.targetType == "entry" && $0.targetId == entry.id }) {
+                WantsCommentRow(comment: $0)
+            }
+        }
+    }
+
+    private func displayOrder(_ entries: [WantEntry]) -> [WantEntry] {
+        guard format != .shopping else { return entries }
+        let accepted = format == .research ? item.completion?.entryId : nil
+        return entries.sorted { left, right in
+            if (left.id == accepted) != (right.id == accepted) { return left.id == accepted }
+            return left.createdAt == right.createdAt ? left.id < right.id : left.createdAt > right.createdAt
+        }
+    }
+
+    @ViewBuilder private func writtenEntry(_ entry: WantEntry) -> some View {
+        if format == .research && item.completion?.entryId == entry.id {
+            Label("Accepted answer", systemImage: "checkmark.circle").font(.caption.bold())
+        }
+        Text(entry.title)
+            .font(format == .research ? .system(.headline, design: .serif) : .headline)
+            .accessibilityAddTraits(.isHeader)
+        Text("\(entry.author.label) · \(entry.createdAt.formatted(.relative(presentation: .named)))")
+            .font(.caption).foregroundStyle(.secondary)
+        if let body = entry.description, !body.isEmpty {
+            Text(body).font(format == .research ? .system(.body, design: .serif) : .body)
+                .textSelection(.enabled)
+        }
+    }
+
     private func entryLabel(_ entry: WantEntry) -> some View {
         HStack(alignment: .top, spacing: Space.inset) {
-            if format == .shopping { offerThumbnail(entry.imageUrl) }
+            offerThumbnail(entry.imageUrl)
             VStack(alignment: .leading, spacing: Space.tight) {
                 Text(entry.title).font(.headline)
-                    .foregroundStyle(WantJSON.webURL(entry.link) == nil ? Color.primary : Color.accentColor)
+                    .foregroundStyle(WantJSON.webURL(entry.productUrl) == nil ? Color.primary : Color.accentColor)
                 if let price = entry.currentPrice {
                     Text([price.formatted, entry.retailer].filter { !$0.isEmpty }.joined(separator: " · "))
                         .font(.subheadline)
@@ -476,7 +527,7 @@ private struct WantsItemDetail: View {
         do {
             entries = try await client.entries(itemID: item.id)
             comments = try await client.comments(listID: listID)
-            if let updated = try await client.list(listID).items?.first(where: { $0.id == item.id }) { item = updated }
+            if let updated = try await client.list(listID, full: format == .research).items?.first(where: { $0.id == item.id }) { item = updated }
             error = nil
         } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
     }
@@ -488,12 +539,19 @@ private struct WantsComments: View {
         if !comments.isEmpty {
             Section("Comments") {
                 ForEach(comments) { comment in
-                    VStack(alignment: .leading) {
-                        Text(comment.author.label).font(.caption).foregroundStyle(.secondary)
-                        Text(comment.body)
-                    }
+                    WantsCommentRow(comment: comment)
                 }
             }
+        }
+    }
+}
+
+private struct WantsCommentRow: View {
+    let comment: WantComment
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.tight) {
+            Text(comment.author.label).font(.caption).foregroundStyle(.secondary)
+            Text(comment.body)
         }
     }
 }
