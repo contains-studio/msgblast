@@ -173,6 +173,13 @@ public actor ChatGPTAccounts {
 }
 
 extension ChatGPTAccounts.Storage {
+    /// Kept in memory only, for Demo.
+    public static func memory() -> Self {
+        final class Items: @unchecked Sendable { let lock = NSLock(); var values: [String: Data] = [:] }
+        let items = Items()
+        return Self(read: { key in items.lock.withLock { items.values[key] } }, write: { key, data in items.lock.withLock { items.values[key] = data } })
+    }
+
     /// Generic passwords in the data protection keychain, never shown in a prompt.
     public static func keychain(service: String) -> Self {
         @Sendable func query(_ key: String) -> [String: Any] {

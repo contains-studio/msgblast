@@ -64,6 +64,7 @@ bash scripts/test_web_comparisons.sh build/contributor-tests
 bash scripts/test_configured_cli_conversations.sh build/contributor-tests
 bash scripts/test_personal_agent_shutdown.sh build/contributor-tests
 bash scripts/test_crash_reporting.sh build/contributor-tests
+bash scripts/test_chatgpt_codex_token.sh build/contributor-tests
 ```
 
 - Web fixtures compile actual app/controller code with local website/Messages
@@ -81,6 +82,11 @@ bash scripts/test_crash_reporting.sh build/contributor-tests
   configuration transport, denied writes, restricted reports, and legacy history.
 - Report fixtures exercise the actual controller with lifecycle/storage
   substitutes, including delayed discovery, shutdown, and persistence.
+
+The ChatGPT token fixture needs the Codex CLI. It runs `codex app-server` with
+Connect with ChatGPT's launch config against the actual token listener and
+helper, a fixture account and a local stand-in for `api.openai.com`, and sends
+nothing off this Mac. See [Connect with ChatGPT](personal-agent-reports.md#connect-with-chatgpt-for-the-msgblast-agent).
 
 The crash fixture also needs Node.js 22. It runs the actual review session and
 intake handler over loopback with synthetic reports, including an uncertain

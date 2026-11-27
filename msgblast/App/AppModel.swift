@@ -124,7 +124,8 @@ final class AppModel: ObservableObject {
     lazy var agentSends = AgentControlSends(model: self)
     lazy var wants = WantsModel(app: self)
     lazy var agentControl = AgentControlListener(directory: local.url.deletingLastPathComponent(), host: self)
-    lazy var chatGPT = ChatGPTAccounts(storage: .keychain(service: "com.msgblast.chatgpt.\(Bundle.main.bundleIdentifier ?? "unknown")"))
+    lazy var chatGPT = ChatGPTAccounts(storage: demo ? .memory() : .keychain(service: "com.msgblast.chatgpt.\(Bundle.main.bundleIdentifier ?? "unknown")"))
+    lazy var chatGPTConnection = ChatGPTConnection(accounts: chatGPT, demo: demo, model: self)
     lazy var chatGPTTokens = ChatGPTTokenListener(supportDirectory: local.url.deletingLastPathComponent(), accounts: chatGPT)
     lazy var webAgents = WebAgents(directory: local.url.deletingLastPathComponent(), fixture: demo && Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool != true, websiteOptInRequired: true)
     lazy var webImageCache: WebImageCache = WebImageCache(directory: local.url.deletingLastPathComponent().appendingPathComponent("web-images", isDirectory: true), onChange: { [weak self] in
