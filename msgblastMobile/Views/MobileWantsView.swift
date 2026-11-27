@@ -160,15 +160,11 @@ private struct WantsItemDetail: View {
             if !entries.isEmpty {
                 Section(format.entries) {
                     ForEach(entries) { entry in
-                        HStack(spacing: Space.inset) {
-                            if format == .shopping { offerThumbnail(entry.imageUrl) }
-                            VStack(alignment: .leading) {
-                                if let url = WantJSON.webURL(entry.link) { Link(entry.title, destination: url) }
-                                else { Text(entry.title) }
-                                if let price = entry.currentPrice {
-                                    Text(price.formatted + (price.isVerified ? "" : " · Unverified")).font(.subheadline)
-                                }
-                            }
+                        if let url = WantJSON.webURL(entry.link) {
+                            Link(destination: url) { entryLabel(entry) }
+                                .buttonStyle(.plain)
+                        } else {
+                            entryLabel(entry)
                         }
                     }
                 }
@@ -179,6 +175,36 @@ private struct WantsItemDetail: View {
         .navigationTitle(format.item)
         .wantsActivity(client: client, refresh: refresh)
         .refreshable { await refresh() }
+    }
+
+    private func entryLabel(_ entry: WantEntry) -> some View {
+        HStack(alignment: .top, spacing: Space.inset) {
+            if format == .shopping { offerThumbnail(entry.imageUrl) }
+            VStack(alignment: .leading, spacing: Space.tight) {
+                Text(entry.title).font(.headline)
+                    .foregroundStyle(WantJSON.webURL(entry.link) == nil ? Color.primary : Color.accentColor)
+                if let price = entry.currentPrice {
+                    Text([price.formatted, entry.retailer].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.subheadline)
+                    let source = switch price.source {
+                    case "retailer_page": "Store page"
+                    case "search": "Search result"
+                    case "aggregator": "Price comparison site"
+                    case "user": "User supplied"
+                    default: price.isVerified ? "Store page" : ""
+                    }
+                    Text([source, price.isVerified ? "" : "Unverified"].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.caption).foregroundStyle(.secondary)
+                    let time = (price.checkedAt ?? price.postedAt).formatted(.relative(presentation: .named))
+                    Text("\(price.postedBy.label) · \(price.checkedAt == nil ? "Posted" : "Checked") \(time)")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else if !entry.retailer.isEmpty {
+                    Text(entry.retailer).font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .contentShape(Rectangle())
     }
 
     private func offerThumbnail(_ address: String?) -> some View {

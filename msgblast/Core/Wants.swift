@@ -38,7 +38,7 @@ public enum WantActor: Codable, Hashable, Sendable {
 public struct WantPrice: Codable, Hashable, Sendable {
     public var price: String, currency: String, originalPrice: String?, postedBy: WantActor, postedAt: Date
     /// Provenance: only a price read on the retailer's own page is verified. Older servers left these out.
-    public var verified: Bool?, checkedAt: Date?
+    public var verified: Bool?, checkedAt: Date?, source: String?
     public var isVerified: Bool { verified == true }
     public var formatted: String { Self.format(price, currency: currency) }
     public var formattedOriginal: String? { originalPrice.flatMap { $0 == price ? nil : Self.format($0, currency: currency) } }
