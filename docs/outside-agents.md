@@ -119,3 +119,38 @@ saved, so quitting msgblast doesn't turn sends back on.
 Settings → Outside agents has the same switch, and Recent sends under it lists the last
 agent sends since msgblast opened, with each one's result. The list never holds message text and
 is not saved.
+
+## The built-in msgblast agent on Claude Code
+
+The built-in msgblast agent can think with the Claude Code installed on this Mac
+(`ClaudeAgentSession` in `msgblast/Core/ClaudeAgentSession.swift`). It uses Claude
+Code's own sign-in and config folder, including `CLAUDE_CONFIG_DIR`; msgblast
+never reads or copies Claude credentials. Sign in with `claude auth login`.
+msgblast shows the same account status as for personal agents; an API-key
+sign-in reads "API key connected · usage billed separately", because that usage
+is billed outside a Claude plan.
+
+Each conversation is one long-running `claude --print` process speaking
+stream-json:
+
+- **Tools:** only msgblast's MCP tools. `--tools ""` removes the built-in tools,
+  `--strict-mcp-config` ignores every other MCP server, and
+  `ENABLE_CLAUDEAI_MCP_SERVERS=false` turns off claude.ai connectors. Hooks,
+  slash commands and the person's settings files are off. Allowed tools are
+  `mcp__msgblast__*`, the permission mode is `dontAsk`, and anything that would
+  ask for permission is denied, so nothing waits on a prompt. If Claude Code
+  reports any other tool, or msgblast's tools didn't connect, msgblast stops the
+  conversation before anything is sent.
+- **Session key:** it is only in the `env` of the `msgblast` server in an
+  owner-only (0600) temporary MCP config file, never in the command line. The
+  file is deleted when the conversation closes.
+- **Stop:** Stop uses Claude Code's stream-json interrupt. The turn ends and the
+  conversation stays open; a tool call already under way may have finished.
+- **Time limit:** a turn has no fixed limit. If Claude Code writes nothing for
+  20 minutes, msgblast ends the process. The conversation is saved and resumes
+  from its session id.
+- **Close:** closing stops Claude Code's whole process group, including the
+  `msgblast mcp` server it started.
+
+It needs Claude Code 2.1.259 or later. Older versions get the same update message
+as configured CLI conversations.
