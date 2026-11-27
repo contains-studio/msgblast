@@ -36,3 +36,8 @@ Wants toolbar.
 Open a list to add an item. Open an item with **Waiting on you** to choose
 an offered answer or write your own. Open lists and items check for new activity
 while the app is active. Pull down to refresh immediately.
+
+
+On either platform, **Start a list** creates a private shopping, task or research list without an account. Use **Keep this list** within 24 hours to retain it. Only the person sees the claim link. The same device can continue working after the list is kept.
+
+The REST access feed removes the claim link after the list is kept and stops work on a removed list. A temporary outage preserves the credential and observes the server’s retry interval. A rejected OAuth token gets one refresh before the app asks the person to reconnect.

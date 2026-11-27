@@ -34,6 +34,76 @@ final class WantsTests: XCTestCase {
                                 "promoted_by": NSNull(), "promoted_at": NSNull()]]]],
     ]
 
+    func testServiceUnavailableRetriesSameBearerAndUnauthorizedRotatesOnce() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [WantStub.self]
+        var received: [String] = []
+        WantStub.handler = { request in
+            received.append(request.value(forHTTPHeaderField: "Authorization") ?? "")
+            switch received.count {
+            case 1: return (503, ["Retry-After": "0"], Data())
+            case 2: return (401, [:], Data())
+            default: return self.reply(["structuredContent": ["kind": "user", "writable_lists": []]], to: request)
+            }
+        }
+        let client = WantMCPClient(endpoint: endpoint, session: URLSession(configuration: config),
+                                   renew: { _ in "rotated" }, token: { "original" })
+        _ = try await client.writableListIDs()
+        XCTAssertEqual(received, ["Bearer original", "Bearer original", "Bearer rotated"])
+    }
+
+    func testPublicClientExchangesBothNativeRedirectsAndRefreshes() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [WantStub.self]
+        let session = URLSession(configuration: config)
+        let server = WantOAuth.Server(issuer: "https://mcp.wantmcp.test", authorizationEndpoint: endpoint,
+                                      tokenEndpoint: endpoint, registrationEndpoint: nil, scope: "lists:write offline_access", requiresIssuer: true)
+        for redirect in ["app.msgblast:/oauth", "http://127.0.0.1:5000/callback"] {
+            let pkce = WantOAuth.PKCE()
+            WantStub.handler = { request in
+                var form = URLComponents()
+                form.percentEncodedQuery = String(decoding: WantStub.body(request), as: UTF8.self)
+                let fields = Dictionary(uniqueKeysWithValues: (form.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+                XCTAssertNil(fields["client_secret"])
+                XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+                XCTAssertEqual(fields["resource"], self.endpoint.absoluteString)
+                XCTAssertEqual(fields["client_id"], "native")
+                if fields["grant_type"] == "authorization_code" {
+                    XCTAssertEqual(fields["redirect_uri"], redirect)
+                    XCTAssertEqual(fields["code_verifier"], pkce.verifier)
+                    XCTAssertEqual(fields["code"], "fixture")
+                    return (200, [:], Data(#"{"access_token":"first","refresh_token":"renew"}"#.utf8))
+                }
+                XCTAssertEqual(fields["grant_type"], "refresh_token")
+                XCTAssertEqual(fields["refresh_token"], "renew")
+                return (200, [:], Data(#"{"access_token":"second","refresh_token":"next"}"#.utf8))
+            }
+            let callback = URL(string: "\(redirect)?state=\(pkce.state)&code=fixture&iss=\(server.issuer)")!
+            let grant = try await WantOAuth.exchange(callback: callback, server: server, clientID: "native",
+                                                     redirect: URL(string: redirect)!, pkce: pkce, resource: endpoint, session: session)
+            let refreshed = try await WantOAuth.refresh(grant, resource: endpoint, session: session)
+            XCTAssertEqual(refreshed.accessToken, "second")
+            XCTAssertEqual(refreshed.refreshToken, "next")
+        }
+    }
+
+    func testClaimAndRemovalAreScopedToTheListAndSurviveRestoration() throws {
+        let expiry = Date().addingTimeInterval(3600)
+        var grant = WantCredential(accessToken: "test")
+        grant.endpoint = endpoint
+        grant.claim = WantClaim(listID: "owned", url: URL(string: "https://wantmcp.com/claim/example")!, expiresAt: expiry)
+        func apply(_ type: String, _ list: String) throws {
+            let data = try JSONSerialization.data(withJSONObject: ["events": [["type": type, "list_id": list]], "next": 27])
+            grant.apply(try WantJSON.decoder.decode(WantAccessPage.self, from: data))
+        }
+        try apply("access.removed", "other")
+        XCTAssertNotNil(grant.claim)
+        try apply("list.claimed", "owned")
+        XCTAssertNil(grant.claim)
+        XCTAssertEqual(grant.accessToken, "test")
+        XCTAssertEqual(WantCredential.restore(try JSONEncoder().encode(grant), for: endpoint)?.removedLists, ["other"])
+    }
+
     func testToolCallCarriesProtocolVersionClientAndEventsCapability() async throws {
         WantStub.handler = { request in
             XCTAssertEqual(request.httpMethod, "POST")
@@ -353,7 +423,7 @@ final class WantsTests: XCTestCase {
         }
         let client = WantMCPClient(endpoint: endpoint, session: URLSession(configuration: config)) { await token.current() }
         do { try await client.answer(questionID: "q", text: "yes"); XCTFail("The rejected write cannot succeed") }
-        catch WantError.server { }
+        catch is CancellationError { }
     }
 
     func testChangedAccountDoesNotSendPendingMutation() async throws {
@@ -457,14 +527,17 @@ final class WantsLiveTests: XCTestCase {
         guard let raw = ProcessInfo.processInfo.environment["WANT_LIVE_MCP"], let resource = URL(string: raw) else {
             throw XCTSkip("Set WANT_LIVE_MCP to check sign-in discovery against a live Want MCP server")
         }
-        let server = try await WantOAuth.discover(resource: resource, hint: nil)
+        let config = URLSessionConfiguration.ephemeral
+        config.httpAdditionalHeaders = ["x-wantmcp-check": "1"]
+        let session = URLSession(configuration: config)
+        let server = try await WantOAuth.discover(resource: resource, hint: nil, session: session)
         XCTAssertTrue(server.requiresIssuer)
         let callback = WantOAuthCallback()
         defer { callback.stop() }
         let redirect = try await callback.start()
-        let clientID = try await WantOAuth.register(server, redirect: redirect)
+        let clientID = try await WantOAuth.register(server, redirect: redirect, session: session)
         let page = WantOAuth.authorizeURL(server, clientID: clientID, redirect: redirect, pkce: WantOAuth.PKCE(), resource: resource)
-        let (_, response) = try await URLSession.shared.data(from: page)
+        let (_, response) = try await session.data(from: page)
         XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200, "the sign-in page accepts msgblast's authorization request")
     }
 

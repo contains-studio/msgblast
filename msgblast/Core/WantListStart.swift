@@ -28,3 +28,25 @@ public struct WantClaim: Codable, Equatable, Sendable {
         return grant
     }
 }
+
+public struct WantAccessPage: Decodable, Sendable {
+    public struct Event: Decodable, Sendable {
+        public let type: String, listId: String
+    }
+    public let events: [Event]
+    public let next: Int
+}
+
+public extension WantCredential {
+    mutating func apply(_ page: WantAccessPage) {
+        for event in page.events {
+            switch event.type {
+            case "access.removed":
+                removedLists = (removedLists ?? []).union([event.listId])
+            case "list.claimed": break
+            default: continue
+            }
+            if event.listId == claim?.listID { claim = nil }
+        }
+    }
+}

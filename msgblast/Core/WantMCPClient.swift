@@ -4,12 +4,14 @@ public enum WantError: Error, Equatable, LocalizedError {
     /// No credential, or the server refused it. `resourceMetadata` is the challenge's discovery URL.
     case unauthorized(resourceMetadata: URL?)
     case server(String)
+    case unavailable(retryAfter: TimeInterval)
     case invalidResponse
 
     public var errorDescription: String? {
         switch self {
         case .unauthorized: "Sign in to The Want MCP again."
         case .server(let message): message
+        case .unavailable: "The Want MCP is temporarily unavailable. Your connection is saved."
         case .invalidResponse: "The Want MCP sent a reply msgblast could not read."
         }
     }
@@ -44,11 +46,12 @@ public struct WantMCPClient: WantService {
     public static let eventsExtension = "io.modelcontextprotocol/events"
     public let endpoint: URL
     private let token: @Sendable () async throws -> String?
+    private let renew: (@Sendable (String) async throws -> String)?
     private let session: URLSession
     private let version: String
 
-    public init(endpoint: URL, session: URLSession = WantOAuth.network, version: String = "dev", token: @escaping @Sendable () async throws -> String?) {
-        self.endpoint = endpoint; self.session = session; self.version = version; self.token = token
+    public init(endpoint: URL, session: URLSession = WantOAuth.network, version: String = "dev", renew: (@Sendable (String) async throws -> String)? = nil, token: @escaping @Sendable () async throws -> String?) {
+        self.renew = renew; self.endpoint = endpoint; self.session = session; self.version = version; self.token = token
     }
 
     /// From `whoami`. An anonymous answer means the credential is gone, so it is treated as signed out.
@@ -167,19 +170,38 @@ public struct WantMCPClient: WantService {
         request.setValue(Self.protocolVersion, forHTTPHeaderField: "MCP-Protocol-Version")
         request.setValue(method, forHTTPHeaderField: "Mcp-Method")
         if method == "tools/call" || method.hasPrefix("events/"), let name = params["name"] as? String { request.setValue(name, forHTTPHeaderField: "Mcp-Name") }
-        let bearer = try await token()
-        if let bearer { request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization") }
-        let (data, response) = try await session.data(for: request, delegate: WantRedirectPolicy())
-        guard let http = response as? HTTPURLResponse else { throw WantError.invalidResponse }
-        if http.statusCode == 403 { throw WantError.server("The Want MCP did not allow that request.") }
-        if http.statusCode == 401 {
-            guard try await token() == bearer else { throw WantError.server("The request used an expired sign-in. Refresh Wants to see its current state.") }
-            throw WantError.unauthorized(resourceMetadata: WantOAuth.resourceMetadata(http.value(forHTTPHeaderField: "WWW-Authenticate")))
-        }
+        let (data, http) = try await authenticated(request)
         let message = try Self.message(data, contentType: http.value(forHTTPHeaderField: "Content-Type"), id: id)
         if let error = message["error"] as? [String: Any] { throw WantError.server(error["message"] as? String ?? "The Want MCP refused the request") }
         guard (200..<300).contains(http.statusCode), let result = message["result"] as? [String: Any] else { throw WantError.invalidResponse }
         return result
+    }
+
+    public func accessEvents(after cursor: Int) async throws -> WantAccessPage {
+        guard endpoint == WantOAuth.resource else { throw WantError.invalidResponse }
+        var url = URLComponents(string: "https://api.wantmcp.com/v1/me/events")!
+        url.queryItems = [.init(name: "after", value: String(cursor)), .init(name: "types", value: "list.claimed,access.removed")]
+        let (data, http) = try await authenticated(URLRequest(url: url.url!))
+        guard http.statusCode == 200 else { throw WantError.invalidResponse }
+        return try WantJSON.decoder.decode(WantAccessPage.self, from: data)
+    }
+
+    private func authenticated(_ input: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        var request = input
+        let bearer = try await token()
+        if let bearer { request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization") }
+        var (data, http) = try await WantOAuth.transmit(request, session: session)
+        if http.statusCode == 401, let bearer, let renew {
+            let fresh = try await renew(bearer)
+            request.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
+            (data, http) = try await WantOAuth.transmit(request, session: session)
+        }
+        if http.statusCode == 403 { throw WantError.server("The Want MCP did not allow that request.") }
+        if http.statusCode == 401 {
+            guard try await token() == request.value(forHTTPHeaderField: "Authorization").map({ String($0.dropFirst(7)) }) else { throw CancellationError() }
+            throw WantError.unauthorized(resourceMetadata: WantOAuth.resourceMetadata(http.value(forHTTPHeaderField: "WWW-Authenticate")))
+        }
+        return (data, http)
     }
 
     /// The JSON-RPC response for `id`, from a JSON body or the `data:` lines of an SSE stream.

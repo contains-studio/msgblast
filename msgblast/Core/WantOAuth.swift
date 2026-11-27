@@ -5,6 +5,7 @@ import Network
 /// What msgblast keeps in the Keychain for The Want MCP: an OAuth grant for the lists the
 /// person ticked, or a pasted write key for one list.
 public struct WantCredential: Codable, Equatable, Sendable {
+    public var removedLists: Set<String>?
     public var claim: WantClaim?
     public var grantID: UUID?
     public var accessToken: String
@@ -134,8 +135,39 @@ public enum WantOAuth {
         guard let clientID = credential.clientID, let endpoint = credential.tokenEndpoint, let refresh = credential.refreshToken else { throw WantError.unauthorized(resourceMetadata: nil) }
         var next = try await token(endpoint, clientID: clientID, form: ["grant_type": "refresh_token", "refresh_token": refresh,
                                                                          "client_id": clientID, "resource": resource.absoluteString], session: session)
+        next.removedLists = credential.removedLists
+        next.claim = credential.claim
         next.refreshToken = next.refreshToken ?? refresh
         return next
+    }
+
+    private actor Backoff {
+        var deadlines: [String: Date] = [:]
+        func wait(for host: String) async throws {
+            while let deadline = deadlines[host], deadline > Date() {
+                try await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow)))
+            }
+        }
+        func postpone(_ host: String, seconds: TimeInterval) {
+            deadlines[host] = max(deadlines[host] ?? .distantPast, Date().addingTimeInterval(seconds))
+        }
+    }
+    private static let backoff = Backoff()
+
+    static func transmit(_ request: URLRequest, session: URLSession) async throws -> (Data, HTTPURLResponse) {
+        let host = request.url?.host ?? ""
+        for attempt in 0...1 {
+            try await backoff.wait(for: host)
+            try Task.checkCancellation()
+            let (data, response) = try await session.data(for: request, delegate: WantRedirectPolicy())
+            guard let http = response as? HTTPURLResponse else { throw WantError.invalidResponse }
+            guard http.statusCode == 503 || http.statusCode == 429 else { return (data, http) }
+            let seconds = http.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init)
+            let delay = seconds.flatMap { $0.isFinite && $0 >= 0 && $0 <= Double(Int32.max) ? $0 : nil } ?? 60
+            await backoff.postpone(host, seconds: delay)
+            if attempt == 1 { throw WantError.unavailable(retryAfter: delay) }
+        }
+        throw WantError.invalidResponse
     }
 
     private static func token(_ endpoint: URL, clientID: String, form: [String: String], session: URLSession) async throws -> WantCredential {
@@ -144,9 +176,9 @@ public enum WantOAuth {
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         var allowed = CharacterSet.urlQueryAllowed; allowed.remove(charactersIn: "+&=")
         request.httpBody = Data(form.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: allowed) ?? "")" }.joined(separator: "&").utf8)
-        let (data, response) = try await session.data(for: request, delegate: WantRedirectPolicy())
+        let (data, response) = try await transmit(request, session: session)
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw WantError.invalidResponse }
-        guard (response as? HTTPURLResponse)?.statusCode == 200, let access = json["access_token"] as? String else {
+        guard response.statusCode == 200, let access = json["access_token"] as? String else {
             if json["error"] as? String == "invalid_grant", form["grant_type"] == "refresh_token" { throw WantError.unauthorized(resourceMetadata: nil) }
             throw WantError.server(json["error_description"] as? String ?? "The Want MCP did not accept the sign-in.")
         }
