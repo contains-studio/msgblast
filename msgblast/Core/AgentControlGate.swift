@@ -89,24 +89,53 @@ import Foundation
 public enum AgentControlWire {
     /// `isLive` turns false once the session the request came on is closed, for example when Outside
     /// agents is switched off while an approval prompt is open. Nothing runs after that.
+    /// A request with a `sessionKey` from `sessionKeys` is the built-in msgblast agent: Full access to AI agents only,
+    /// never asked about. Without `sessionKeys` (the Tailscale path) every key is refused. While `outsideAgents` is
+    /// false only keyed requests run. No other caller may use the agent's name.
     @MainActor public static func respond(to line: Data, host: AgentControlHost, gate: AgentControlGate, approve: @escaping AgentControlGate.Approve,
+                                          sessionKeys: AgentSessionKeys? = nil, outsideAgents: Bool = true,
                                           isLive: @MainActor () -> Bool = { true }) async -> Data {
         guard let request = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else {
             return reply(nil, error: "invalidRequest", "Each line must be one JSON object.")
         }
         let id = request["id"]
-        guard let client = (request["client"] as? String).flatMap(AgentControlGate.clientName) else {
-            return reply(id, error: "invalidRequest", "Name the agent in \"client\", in 80 characters or fewer.")
+        let client: String, access: AgentControlAccess, keyLive: @MainActor () -> Bool
+        if let key = request["sessionKey"] {
+            guard let key = key as? String, let sessionKeys, sessionKeys.isLive(key) else {
+                return reply(id, error: "notApproved", "This msgblast agent session has ended. Nothing was run.")
+            }
+            (client, access, keyLive) = (MsgblastAgent.clientName, .full, { sessionKeys.isLive(key) })
+        } else {
+            guard let name = (request["client"] as? String).flatMap(AgentControlGate.clientName) else {
+                return reply(id, error: "invalidRequest", "Name the agent in \"client\", in 80 characters or fewer.")
+            }
+            guard !isReserved(name) else {
+                return reply(id, error: "notApproved", "\(MsgblastAgent.clientName) is the name of msgblast’s own agent. Use another name.")
+            }
+            guard outsideAgents else { return reply(id, error: "unavailable", AgentControlCLI.unavailable) }
+            guard let level = await gate.access(for: name, approve: approve) else {
+                return reply(id, error: "notApproved", notApproved(name, gate: gate))
+            }
+            (client, access, keyLive) = (name, level, { true })
         }
-        guard let access = await gate.access(for: client, approve: approve) else {
-            return reply(id, error: "notApproved", notApproved(client, gate: gate))
-        }
-        guard isLive() else { return reply(id, error: "unavailable", "msgblast closed this session, because Outside agents was switched off or its key changed. Nothing was run.") }
+        guard isLive(), keyLive() else { return reply(id, error: "unavailable", "msgblast closed this session, because Outside agents was switched off or its key changed. Nothing was run.") }
+        let agentsOnly = client == MsgblastAgent.clientName
         switch request["method"] as? String {
         case "tools/list": return reply(id, result: ["tools": toolList(access)])
-        case "tools/call": return await call(request, id: id, access: access, host: host, client: client)
+        case "tools/call": return await call(request, id: id, access: access, host: host, client: client, agentsOnly: agentsOnly)
         default: return reply(id, error: "invalidRequest", "Unknown method. Use tools/list or tools/call.")
         }
+    }
+
+    /// Whether the line carries a session key, so the socket can tell the built-in agent's requests from others'.
+    public static func hasSessionKey(_ line: Data) -> Bool {
+        ((try? JSONSerialization.jsonObject(with: line)) as? [String: Any])?["sessionKey"] != nil
+    }
+
+    /// The built-in agent's name, compared ignoring case and spacing.
+    static func isReserved(_ client: String) -> Bool {
+        let squeezed = { (name: String) in name.lowercased().filter { !$0.isWhitespace } }
+        return squeezed(client) == squeezed(MsgblastAgent.clientName)
     }
 
     @MainActor private static func notApproved(_ client: String, gate: AgentControlGate) -> String {
@@ -124,13 +153,13 @@ public enum AgentControlWire {
     }
 
     @MainActor private static func call(_ request: [String: Any], id: Any?, access: AgentControlAccess, host: AgentControlHost,
-                                         client: String) async -> Data {
+                                         client: String, agentsOnly: Bool) async -> Data {
         guard let name = request["name"] as? String else { return reply(id, error: "invalidRequest", "tools/call needs \"name\".") }
         guard let arguments = encoded(request["arguments"]) else {
             return reply(id, error: "invalidArguments", "arguments must be a JSON object.")
         }
         do {
-            let data = try await AgentControl.call(name, arguments: arguments, access: access, host: host, client: client)
+            let data = try await AgentControl.call(name, arguments: arguments, access: access, host: host, client: client, agentsOnly: agentsOnly)
             return reply(id, result: try JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed))
         } catch let error as AgentControlError {
             return reply(id, error: code(error), error.localizedDescription)
