@@ -126,7 +126,7 @@ public actor CodexAgentSession: MsgblastAgentRunner {
         environment.removeValue(forKey: "CLAUDECODE")
         if let codexHome {
             environment["CODEX_HOME"] = codexHome.path
-            environment.removeValue(forKey: "OPENAI_API_KEY")
+            for key in ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"] { environment.removeValue(forKey: key) }
         }
         let process = Process(), stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
         process.executableURL = agent.executableURL
