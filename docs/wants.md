@@ -23,3 +23,11 @@ The default endpoint is `https://mcp.wantmcp.com/mcp`. To use another server, se
 `WantMCPClient` sends stateless MCP 2026-07-28 JSON-RPC requests and accepts JSON or request-scoped SSE replies. It declares the Events extension in `_meta`. `whoami` identifies writable lists. The panel reads list pages, comments, pending suggestions and the opened item's entry pages. It polls `list.activity` and stores its cursor in `wants.json` after refreshing the lists and opened items. Each page must have a new, durably saved cursor before its events can be forwarded. A crash during forwarding can leave the remaining events on that page unsent.
 
 Browser sign-in uses PKCE, a loopback callback and refresh tokens. The panel uses `add_item` and `answer_question` for changes.
+
+## On iPhone
+
+From the pairing screen or the inbox, open **Wants**. In the private list’s
+settings on wantmcp.com, open **Agents**, choose **Other**, and enter msgblast
+as the agent name. Create the key, expand **Show all**, and paste the write key
+into **Connect list** on the phone. The iPhone connects directly to the Wants
+server and stores the key in its own Keychain. Disconnect from the Wants toolbar.

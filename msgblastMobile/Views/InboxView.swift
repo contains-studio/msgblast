@@ -61,6 +61,9 @@ struct InboxView: View {
         .searchFocused($searching)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) { Button { settings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("Settings") }
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink { MobileWantsView() } label: { Label("Wants", systemImage: "checklist") }
+            }
             DefaultToolbarItem(kind: .search, placement: .bottomBar)
             ToolbarSpacer(.flexible, placement: .bottomBar)
             ToolbarItem(placement: .bottomBar) {
