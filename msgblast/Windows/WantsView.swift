@@ -73,6 +73,7 @@ private struct WantsSignInView: View {
     @ObservedObject var wants: WantsModel
     @State private var key = ""
     @State private var showingKey = false
+    @State private var startingList = false
 
     var body: some View {
         VStack(spacing: 16) {
@@ -87,6 +88,7 @@ private struct WantsSignInView: View {
                 Button("Cancel") { wants.cancelSignIn() }
             } else {
                 Button("Connect with The Want MCP") { Task { await wants.signIn() } }.buttonStyle(.borderedProminent).controlSize(.large)
+                Button("Start a list") { startingList = true }
                 if showingKey {
                     HStack {
                         SecureField("wk_…", text: $key).textFieldStyle(.roundedBorder).frame(width: 260)
@@ -99,7 +101,8 @@ private struct WantsSignInView: View {
                     Button("I already have a list key") { showingKey = true }.buttonStyle(.link)
                 }
             }
-        }.multilineTextAlignment(.center).padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
+        }.sheet(isPresented: $startingList) { StartWantListSheet(start: wants.startList) }
+        .multilineTextAlignment(.center).padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -113,6 +116,12 @@ private struct WantsListColumn: View {
     var body: some View {
         VStack(spacing: 0) {
             List(selection: $selection) {
+                if let claim = wants.claim, claim.active {
+                    VStack(alignment: .leading) {
+                        Button("Keep this list") { wants.keepList(claim) }.buttonStyle(.link)
+                        Text("Expires \(claim.expiresAt.formatted())").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 ForEach(wants.lists) { list in
                     Section {
                         ForEach(list.items ?? []) { item in

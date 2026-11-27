@@ -51,6 +51,16 @@ public actor WantFixture: WantService {
         comments.append(reply)
     }
 
+    public func startList(title: String, format: WantFormat) -> WantCredential {
+        let id = "lst_sample"
+        lists = [WantList(id: id, url: "https://example.com", title: title, ownerHandle: "", itemCount: 0,
+                          items: [], format: format.rawValue, visibility: "private")]
+        comments = []; suggested = []; pending = []
+        var grant = WantCredential(accessToken: "demo")
+        grant.claim = WantClaim(listID: id, url: URL(string: "https://example.com/claim/demo")!, expiresAt: Date().addingTimeInterval(86400))
+        return grant
+    }
+
     public func writableListIDs() -> [String] { lists.map(\.id) }
     public func list(_ id: String) throws -> WantList {
         guard var list = lists.first(where: { $0.id == id }) else { throw WantError.server("List not found") }
