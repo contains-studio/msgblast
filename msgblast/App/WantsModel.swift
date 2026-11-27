@@ -71,6 +71,7 @@ import msgblastRemoteProtocol
     private var callback: WantOAuthCallback?
     private var authorization: Task<Void, Never>?
     private var refreshing: Task<String, Error>?
+    private var rotation = WantTokenRotation()
     private lazy var sends = AgentControlSends(model: app, source: .wants)
     private let keychain: WantKeychain
     private var forwardingGrant: String { saved.grantID?.uuidString ?? "unbound" }
@@ -241,7 +242,7 @@ import msgblastRemoteProtocol
     func signOut() {
         accessMonitor?.cancel(); accessMonitor = nil; removedLists.removeAll()
         poller?.cancel(); poller = nil; session += 1; latestReload = UUID()
-        refreshing?.cancel(); refreshing = nil
+        refreshing?.cancel(); refreshing = nil; rotation.received = nil
         if !app.demo, !keychain.delete() { error = "Signed out on this Mac. The Keychain could not remove the saved key." }
         credential = nil; reloadPending = false; answering = []
         signedIn = false; lists = []; comments = [:]; suggestions = [:]; entries = [:]
@@ -278,7 +279,7 @@ import msgblastRemoteProtocol
 
     /// The bearer token, refreshed first when an OAuth token is about to expire.
     private func token(for generation: Int, refused: String? = nil) async throws -> String {
-        guard generation == session, let credential else { throw CancellationError() }
+        let credential = try currentCredential(for: generation)
         if let refused {
             guard refused == credential.accessToken else { return credential.accessToken }
             guard credential.refreshToken != nil else { throw WantError.unauthorized(resourceMetadata: nil) }
@@ -291,18 +292,24 @@ import msgblastRemoteProtocol
         return token
     }
 
+    private func currentCredential(for generation: Int) throws -> WantCredential {
+        guard generation == session, let credential else { throw CancellationError() }
+        if let next = try rotation.persist(replacing: credential, using: { [keychain] next in
+            guard keychain.save(next) else { throw WantError.server("msgblast could not save your refreshed sign-in to the Keychain.") }
+        }) {
+            self.credential = next
+            return next
+        }
+        return credential
+    }
+
     private func refresh(_ credential: WantCredential, generation: Int) -> Task<String, Error> {
         let task = Task {
             defer { if session == generation { refreshing = nil } }
-            var next = try await WantOAuth.refresh(credential, resource: keychain.endpoint)
+            let next = try await WantOAuth.refresh(credential, resource: keychain.endpoint)
             guard session == generation else { throw CancellationError() }
-            next.grantID = credential.grantID
-            next.accessCursor = self.credential?.accessCursor
-            next.removedLists = self.credential?.removedLists
-            next.claim = self.credential?.claim
-            guard keychain.save(next) else { throw WantError.server("msgblast could not save your refreshed sign-in to the Keychain.") }
-            self.credential = next
-            return next.accessToken
+            rotation.received = next
+            return try currentCredential(for: generation).accessToken
         }
         refreshing = task
         return task

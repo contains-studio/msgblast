@@ -128,6 +128,21 @@ final class WantsTests: XCTestCase {
         XCTAssertEqual(WantOAuth.retryDelay("30", now: now), 30)
     }
 
+    func testRotatedCredentialSurvivesFailedPersistence() throws {
+        var old = WantCredential(accessToken: "old", refreshToken: "spent")
+        old.grantID = UUID()
+        var rotation = WantTokenRotation()
+        rotation.received = WantCredential(accessToken: "new", refreshToken: "rotated")
+        XCTAssertThrowsError(try rotation.persist(replacing: old) { _ in throw WantError.server("Keychain locked") })
+        old.removedLists = ["revoked-between-attempts"]
+        let saved = try XCTUnwrap(rotation.persist(replacing: old) { _ in })
+        XCTAssertEqual(saved.refreshToken, "rotated")
+        XCTAssertEqual(saved.accessToken, "new")
+        XCTAssertEqual(saved.grantID, old.grantID)
+        XCTAssertEqual(saved.removedLists, old.removedLists)
+        XCTAssertNil(try rotation.persist(replacing: saved) { _ in XCTFail("Rotation already persisted") })
+    }
+
     func testPublicClientExchangesBothNativeRedirectsAndRefreshes() async throws {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [WantStub.self]

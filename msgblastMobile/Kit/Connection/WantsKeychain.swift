@@ -57,6 +57,7 @@ public enum WantsKeychain {
     public let id = UUID()
     @Published public private(set) var grant: WantCredential
     private var refreshing: Task<String, Error>?
+    private var rotation = WantTokenRotation()
 
     public init(_ grant: WantCredential) { self.grant = grant; removed = grant.removedLists ?? [] }
 
@@ -69,7 +70,9 @@ public enum WantsKeychain {
 
     private func checkCurrent() throws {
         guard !revoked, let saved = try WantsKeychain.read(),
-              saved.grantID == grant.grantID, saved.accessToken == grant.accessToken else { throw CancellationError() }
+              saved.grantID == grant.grantID, saved.accessToken == grant.accessToken,
+              saved.refreshToken == grant.refreshToken else { throw CancellationError() }
+        if let next = try rotation.persist(replacing: grant, using: WantsKeychain.save) { grant = next }
     }
 
     public func renew(_ refused: String) async throws -> String {
@@ -99,11 +102,11 @@ public enum WantsKeychain {
             do {
                 let page = try await client.accessEvents(after: cursor)
                 try Task.checkCancellation()
+                try checkCurrent()
                 var next = grant
                 next.apply(page)
                 if let lost = next.removedLists, removed != lost { removed.formUnion(lost) }
                 if next != grant {
-                    try checkCurrent()
                     try WantsKeychain.save(next)
                     grant = next
                 }
@@ -122,7 +125,7 @@ public enum WantsKeychain {
         return try await refresh()
     }
 
-    public func refresh() async throws -> String {
+    private func refresh() async throws -> String {
         if let refreshing {
             let token = try await refreshing.value
             try checkCurrent()
@@ -130,16 +133,11 @@ public enum WantsKeychain {
         }
         let previous = grant
         let task = Task {
-            var next = try await WantOAuth.refresh(previous, resource: WantOAuth.resource)
-            try checkCurrent()
+            let next = try await WantOAuth.refresh(previous, resource: WantOAuth.resource)
             guard previous.accessToken == grant.accessToken else { throw CancellationError() }
-            next.claim = grant.claim
-            next.accessCursor = grant.accessCursor
-            next.removedLists = grant.removedLists
-            next.grantID = previous.grantID
-            try WantsKeychain.save(next)
-            grant = next
-            return next.accessToken
+            rotation.received = next
+            try checkCurrent()
+            return grant.accessToken
         }
         refreshing = task
         defer { refreshing = nil }

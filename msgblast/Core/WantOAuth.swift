@@ -31,6 +31,23 @@ public struct WantCredential: Codable, Equatable, Sendable {
     }
 }
 
+/// Keeps a completed token exchange available until the replacement is durable.
+public struct WantTokenRotation {
+    public var received: WantCredential?
+    public init() {}
+
+    public mutating func persist(replacing current: WantCredential, using save: (WantCredential) throws -> Void) throws -> WantCredential? {
+        guard var next = received else { return nil }
+        next.grantID = current.grantID
+        next.accessCursor = current.accessCursor
+        next.removedLists = current.removedLists
+        next.claim = current.claim
+        try save(next)
+        received = nil
+        return next
+    }
+}
+
 /// OAuth 2.1 authorization code + PKCE (S256) as MCP 2026-07-28 describes it: protected resource
 /// metadata, then the authorization server's metadata, Dynamic Client Registration as a native
 /// app with a loopback redirect, and the MCP server as the `resource`.
