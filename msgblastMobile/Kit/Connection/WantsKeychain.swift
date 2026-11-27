@@ -26,6 +26,7 @@ public enum WantsKeychain {
         var item = query
         item[kSecValueData as String] = Data(key.utf8)
         item[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        SecItemDelete(query as CFDictionary)
         guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else {
             throw WantError.server("The Wants key could not be saved.")
         }
