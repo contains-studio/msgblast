@@ -77,6 +77,7 @@ struct MobileWantsView: View {
         }
         .navigationTitle("Wants")
         .onAppear {
+            guard connection == nil else { return }
             do { connection = try WantsKeychain.read().map(MobileWantConnection.init) } catch { self.error = error.localizedDescription }
         }
         .onDisappear { operation?.cancel() }
