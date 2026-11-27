@@ -252,8 +252,8 @@ private struct WantsAccessView<Content: View>: View {
     let listID: String
     let client: WantMCPClient
     @Environment(\.scenePhase) private var phase
-    @ViewBuilder var content: () -> Content
     @ObservedObject var connection: MobileWantConnection
+    @ViewBuilder var content: () -> Content
 
     var body: some View {
         if connection.revoked || connection.removed.contains(listID) {
