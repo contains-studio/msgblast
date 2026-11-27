@@ -1,6 +1,6 @@
 # Wants (The Want MCP)
 
-Open **View → Show Wants** (⌘3) and choose **Sign In…** to select your lists in the browser. To connect one list using a write key, open a list's settings, choose **Agents › Add another agent**, then paste the `wk_` key into msgblast.
+Open **View → Show Wants** (⌘3) and choose **Connect with The Want MCP** to select your lists in the browser. To connect one list using a write key, choose **I already have a list key → Get a list key**, select your list on the website and copy its key into the secure field.
 
 Shopping lists show offers, task lists show updates, and research lists show answers. Choose an item to see its entries, comments, status, and who claimed it. **Waiting on you** shows the agent's question. Outside suggestions appear as plain text. Prices show when they were checked and carry an **unverified** label unless the retailer's page confirmed them.
 
@@ -26,11 +26,12 @@ Browser sign-in uses PKCE, a loopback callback and refresh tokens. The panel use
 
 ## On iPhone
 
-From the pairing screen or the inbox, open **Wants**. In the private list’s
-settings on wantmcp.com, open **Agents**, choose **Other**, and enter msgblast
-as the agent name. Create the key, expand **Show all**, and paste the write key
-into **Connect list** on the phone. The iPhone connects directly to the Wants
-server and stores the key in its own Keychain. Disconnect from the Wants toolbar.
+From the pairing screen or inbox, open **Wants → Connect with The Want MCP**.
+Use the system authentication sheet to grant access to your chosen lists. The
+phone stores the grant in its own Keychain, refreshes it before expiry, and
+connects directly without a Mac. An existing list key still works. Choose
+**I already have a list key** for the single-list fallback. Disconnect from the
+Wants toolbar.
 
 Open a list to add an item. Open an item with **Waiting on you** to choose
 an offered answer or write your own. Open lists and items check for new activity
