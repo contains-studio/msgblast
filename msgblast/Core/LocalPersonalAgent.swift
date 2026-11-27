@@ -307,6 +307,26 @@ final class AgentCancellation: @unchecked Sendable {
 
 enum AgentProcess {
     struct Result: Sendable { let status: Int32; let stdout: String; var stderr: String = ""; var sessionID: String? = nil }
+    /// The process's own group, read right after launch so a stale ID is never signalled.
+    static func processGroup(of process: Process) -> pid_t? {
+        let pid = process.processIdentifier
+        return pid != getpgrp() && (getpgid(pid) == pid || kill(-pid, 0) == 0) ? pid : nil
+    }
+    /// Ends the process and its whole group, including wrapper children left after the leader exits.
+    static func stop(_ process: Process, group: pid_t?) {
+        if let group {
+            kill(-group, SIGTERM)
+            let deadline = Date().addingTimeInterval(1)
+            while kill(-group, 0) == 0 && Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
+            if kill(-group, 0) == 0 { kill(-group, SIGKILL) }
+        } else if process.isRunning {
+            process.terminate()
+            let deadline = Date().addingTimeInterval(1)
+            while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
+            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+        }
+        if process.isRunning { process.waitUntilExit() }
+    }
     static func readOutput(_ url: URL) throws -> String {
         let file = try FileHandle(forReadingFrom: url)
         defer { try? file.close() }
@@ -346,24 +366,8 @@ enum AgentProcess {
         // These owner-only temporary files are removed on success, failure, timeout and cancellation.
         // Foundation launches each Process in its own process group. Validate the
         // group before using it, and clean up wrapper children even after the leader exits.
-        let pid = process.processIdentifier
-        let group = pid != getpgrp() && (getpgid(pid) == pid || kill(-pid, 0) == 0) ? pid : nil
-        defer {
-            if let group {
-                kill(-group, SIGTERM)
-                let deadline = Date().addingTimeInterval(1)
-                while kill(-group, 0) == 0 && Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
-                if kill(-group, 0) == 0 { kill(-group, SIGKILL) }
-            } else if process.isRunning {
-                process.terminate()
-                let deadline = Date().addingTimeInterval(1)
-                while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
-                if process.isRunning { kill(pid, SIGKILL) }
-            }
-            if process.isRunning {
-                process.waitUntilExit()
-            }
-        }
+        let group = processGroup(of: process)
+        defer { stop(process, group: group) }
         let deadline = Date().addingTimeInterval(timeout)
         while process.isRunning {
             if cancellation.isCancelled { throw CancellationError() }
