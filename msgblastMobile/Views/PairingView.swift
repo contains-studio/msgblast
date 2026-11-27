@@ -28,11 +28,6 @@ struct PairingView: View {
                 offerSections(offer)
             } else {
                 scanSections
-                if close == nil && !pasting {
-                    Section {
-                        NavigationLink { MobileWantsView() } label: { Label("Wants", systemImage: "checklist") }
-                    } footer: { Text("Open your Wants lists directly on this iPhone.") }
-                }
             }
         }
         .listSectionSpacing(Space.section)

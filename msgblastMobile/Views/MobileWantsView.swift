@@ -4,6 +4,8 @@ import msgblastMobileKit
 struct MobileWantsView: View {
     @State private var key: String?
     @State private var draft = ""
+    @FocusState private var editingKey: Bool
+    @State private var keyRejected = false
     @State private var connecting = false
     @State private var error: String?
 
@@ -14,24 +16,26 @@ struct MobileWantsView: View {
     var body: some View {
         Group {
             if let key {
-                WantsLists(client: Self.client(key)).id(key)
+                WantsLists(client: Self.client(key)) { disconnect(replacing: true) }
+                    .id(key)
                     .toolbar {
                         Button("Disconnect", systemImage: "person.crop.circle.badge.minus") {
-                            do { try WantsKeychain.remove(); self.key = nil }
-                            catch { self.error = error.localizedDescription }
+                            disconnect(replacing: false)
                         }
                     }
             } else {
                 Form {
                     Section {
+                        if keyRejected { Text("This list key was rejected. Paste a new key from your list’s settings.").foregroundStyle(.secondary) }
                         SecureField("List write key", text: $draft)
+                            .focused($editingKey)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                         Button("Connect list") { Task { await connect() } }
                             .disabled(connecting || WantCredential.writeKey(draft) == nil)
-                    } header: { Text("Connect a list") } footer: {
+                    } footer: {
                         Text("In your list’s settings, open Agents and create a key for msgblast. Paste the wk_ key here.")
                     }
-                    Link("Open The Want MCP", destination: URL(string: "https://wantmcp.com/app")!)
+                    Link("Get a list key on Wants", destination: URL(string: "https://wantmcp.com/app")!)
                 }
             }
         }
@@ -44,6 +48,16 @@ struct MobileWantsView: View {
         } message: { Text(error ?? "") }
     }
 
+    private func disconnect(replacing: Bool) {
+        do {
+            try WantsKeychain.remove()
+            key = nil
+            draft = ""
+            keyRejected = replacing
+            editingKey = replacing
+        } catch { self.error = error.localizedDescription }
+    }
+
     private func connect() async {
         guard !connecting, let credential = WantCredential.writeKey(draft) else { return }
         connecting = true
@@ -52,27 +66,47 @@ struct MobileWantsView: View {
             _ = try await Self.client(credential.accessToken).writableListIDs()
             try WantsKeychain.save(credential.accessToken)
             draft = ""
+            keyRejected = false
             key = credential.accessToken
+        } catch WantError.unauthorized {
+            keyRejected = true
+            draft = ""
+            editingKey = true
         } catch { self.error = error.localizedDescription }
     }
 }
 
 private struct WantsLists: View {
     let client: WantMCPClient
+    let replaceKey: () -> Void
+    @State private var keyRejected = false
     @State private var lists: [WantList]?
     @State private var error: String?
 
     var body: some View {
         List {
-            if let error { Text(error).foregroundStyle(.secondary) }
+            if keyRejected {
+                Section {
+                    Text("This list key no longer has access.")
+                    Button("Replace list key", action: replaceKey)
+                }
+            } else if let error { Text(error).foregroundStyle(.secondary) }
             if let lists {
-                if lists.isEmpty { ContentUnavailableView("No writable lists", systemImage: "checklist") }
+                if lists.isEmpty {
+                    ContentUnavailableView {
+                        Label("No writable lists", systemImage: "checklist")
+                    } description: {
+                        Text("Create a list on Wants or connect a key with access to an existing one.")
+                    } actions: {
+                        Link("Open my lists on Wants", destination: URL(string: "https://wantmcp.com/app")!)
+                    }
+                }
                 ForEach(lists) { list in
                     NavigationLink { WantsListDetail(client: client, list: list) } label: {
                         Label(list.title, systemImage: list.isPrivate ? "lock" : "list.bullet")
                     }
                 }
-            } else if error == nil { ProgressView("Loading lists") }
+            } else if error == nil && !keyRejected { ProgressView("Loading lists") }
         }
         .task { await refresh() }
         .refreshable { await refresh() }
@@ -84,7 +118,13 @@ private struct WantsLists: View {
             for id in try await client.writableListIDs() { result.append(try await client.list(id)) }
             try Task.checkCancellation()
             lists = result
+            keyRejected = false
             error = nil
+        } catch WantError.unauthorized {
+            guard !Task.isCancelled else { return }
+            lists = nil
+            error = nil
+            keyRejected = true
         } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
     }
 }
@@ -104,16 +144,22 @@ private struct WantsListDetail: View {
                     await refresh()
                 }
             }
-            Section("Items") {
+            Section {
                 ForEach(list.items ?? []) { item in
-                    NavigationLink { WantsItemDetail(client: client, listID: list.id, item: item, format: list.kind) } label: {
+                    NavigationLink { WantsItemDetail(client: client, listID: list.id, itemURL: WantJSON.webURL(list.url(for: item)), item: item, format: list.kind) } label: {
                         VStack(alignment: .leading) {
                             Text(item.text)
-                            if item.openQuestion != nil { Text(WantFormat.waiting).font(.caption).foregroundStyle(.secondary) }
+                            if item.openQuestion != nil {
+                                Text(WantFormat.waiting).font(.caption).foregroundStyle(.secondary)
+                            } else if list.kind == .shopping && item.entryCounts.listed > 0 {
+                                Text(item.entryCounts.listed == 1 ? "1 offer" : "\(item.entryCounts.listed) offers")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
-                if list.items?.isEmpty != false { Text("No items yet").foregroundStyle(.secondary) }
+            } header: {
+                if list.items?.isEmpty == false { Text("Items") }
             }
             WantsComments(comments: comments.filter { $0.targetId == list.id })
         }
@@ -134,20 +180,22 @@ private struct WantsListDetail: View {
 private struct WantsItemDetail: View {
     let client: WantMCPClient
     let listID: String
+    let itemURL: URL?
     @State var item: WantItem
     let format: WantFormat
-    @State private var entries: [WantEntry] = []
+    @State private var entries: [WantEntry]?
     @State private var comments: [WantComment] = []
     @State private var error: String?
 
     var body: some View {
         List {
             Section {
-                Text(item.text).font(.headline)
+                Text(item.text).font(.title2.bold()).accessibilityAddTraits(.isHeader)
                 if let details = item.details ?? item.detailsPreview, !details.isEmpty { Text(details) }
             }
             if let question = item.openQuestion {
                 Section(WantFormat.waiting) {
+                    if let author = question.askedBy { Text(author.label).font(.caption).foregroundStyle(.secondary) }
                     Text(question.text)
                     WantsSubmission(title: "Send answer", placeholder: "Your answer", options: question.options ?? []) { text in
                         try await client.answer(questionID: question.id, text: text)
@@ -157,7 +205,7 @@ private struct WantsItemDetail: View {
                     .id(question.id)
                 }
             }
-            if !entries.isEmpty {
+            if let entries, !entries.isEmpty {
                 Section(format.entries) {
                     ForEach(entries) { entry in
                         if let url = WantJSON.webURL(entry.link) {
@@ -169,10 +217,16 @@ private struct WantsItemDetail: View {
                     }
                 }
             }
+            if entries?.isEmpty == true && error == nil && item.openQuestion == nil {
+                Section {
+                    Text("No \(format.entries.lowercased()) yet").foregroundStyle(.secondary)
+                    if let itemURL { Link("Open item on Wants", destination: itemURL) }
+                }
+            }
             WantsComments(comments: comments.filter { $0.targetId == item.id })
             if let error { Text(error).foregroundStyle(.secondary) }
         }
-        .navigationTitle(format.item)
+        .navigationBarTitleDisplayMode(.inline)
         .wantsActivity(client: client, refresh: refresh)
         .refreshable { await refresh() }
     }

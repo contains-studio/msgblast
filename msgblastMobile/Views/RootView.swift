@@ -14,16 +14,23 @@ struct RootView: View {
     var body: some View {
         Group {
             if app.connection.pairedMac == nil {
-                NavigationStack { PairingView(app: app, incomingLink: $incomingLink, startPasting: launchScreen == .pastePairingLink) }
+                NavigationStack {
+                    List {
+                        NavigationLink { MobileWantsView() } label: { Label("Open Wants", systemImage: "checklist") }
+                        Button { showingRepair = true } label: { Label("Pair Your Mac", systemImage: "laptopcomputer") }
+                    }
+                    .navigationTitle("msgblast")
+                }
             } else {
                 NavigationStack(path: $path) { InboxView(app: app, launchScreen: launchScreen) }
             }
         }
         .sheet(isPresented: $showingRepair) {
-            NavigationStack { PairingView(app: app, incomingLink: $incomingLink, close: { showingRepair = false }) }
+            NavigationStack { PairingView(app: app, incomingLink: $incomingLink, close: { showingRepair = false }, startPasting: launchScreen == .pastePairingLink) }
                 .interactiveDismissDisabled()  // Closes only on success or Cancel.
         }
         .onAppear {
+            if launchScreen == .pastePairingLink { showingRepair = true }
             presentRepairIfNeeded()
             if case .conversation(let id) = launchScreen, path.isEmpty { path = [id] }
         }
@@ -32,10 +39,9 @@ struct RootView: View {
 }
 
 extension RootView {
-    /// A link that arrives while a Mac is paired opens the pairing sheet. When no Mac is
-    /// paired the root pairing screen reads it instead.
+    /// The pairing sheet consumes incoming links in either connection state.
     fileprivate func presentRepairIfNeeded() {
-        if incomingLink != nil && app.connection.pairedMac != nil { showingRepair = true }
+        if incomingLink != nil { showingRepair = true }
     }
 }
 
