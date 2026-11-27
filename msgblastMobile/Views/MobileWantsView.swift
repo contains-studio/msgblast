@@ -462,6 +462,7 @@ private struct WantsItemDetail: View {
                     }
                 }
             }
+            if entries == nil && error == nil { ProgressView() }
             if entries?.isEmpty == true && error == nil && item.openQuestion == nil {
                 Section {
                     Text(format == .shopping ? "No products yet" : "No \(format.entries.lowercased()) yet").foregroundStyle(.secondary)
@@ -472,20 +473,22 @@ private struct WantsItemDetail: View {
             if let error { Text(error).foregroundStyle(.secondary) }
         }
         .navigationBarTitleDisplayMode(.inline)
+        .task { await refresh() }
         .wantsActivity(client: client, refresh: refresh)
         .refreshable { await refresh() }
     }
 
     private func entryRow(_ entry: WantEntry) -> some View {
-        VStack(alignment: .leading, spacing: Space.gap) {
+        let listed = entry.status == "listed"
+        return VStack(alignment: .leading, spacing: Space.gap) {
             if format == .shopping {
-                if let url = WantJSON.webURL(entry.productUrl) {
+                if listed, let url = WantJSON.webURL(entry.productUrl) {
                     WantsBrowserLink(destination: url) { entryLabel(entry) }.buttonStyle(.plain)
                 } else { entryLabel(entry) }
             } else {
                 writtenEntry(entry)
             }
-            ForEach(Array((entry.links ?? []).enumerated()), id: \.offset) { _, address in
+            ForEach(Array((listed ? entry.links ?? [] : []).enumerated()), id: \.offset) { _, address in
                 if let url = WantJSON.webURL(address) {
                     WantsBrowserLink(destination: url) {
                         Label(url.absoluteString.components(separatedBy: "://").dropFirst().joined(separator: "://"),
