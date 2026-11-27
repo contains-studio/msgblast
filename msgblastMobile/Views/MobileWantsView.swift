@@ -28,7 +28,6 @@ struct MobileWantsView: View {
                     editingKey = true
                     keyRejected = true
                 }
-                    .environmentObject(connection)
                     .id(connection.id)
                     .toolbar {
                         Button("Disconnect", systemImage: "person.crop.circle.badge.minus") {
@@ -218,7 +217,7 @@ private struct WantsLists: View {
                     }
                 }
                 ForEach(available) { list in
-                    NavigationLink { WantsAccessView(listID: list.id, client: client) { WantsListDetail(client: client, list: list) } } label: {
+                    NavigationLink { WantsAccessView(listID: list.id, client: client, connection: connection) { WantsListDetail(connection: connection, client: client, list: list) } } label: {
                         Label(list.title, systemImage: list.isPrivate ? "lock" : "list.bullet")
                     }
                 }
@@ -254,7 +253,7 @@ private struct WantsAccessView<Content: View>: View {
     let client: WantMCPClient
     @Environment(\.scenePhase) private var phase
     @ViewBuilder var content: () -> Content
-    @EnvironmentObject private var connection: MobileWantConnection
+    @ObservedObject var connection: MobileWantConnection
 
     var body: some View {
         if connection.revoked || connection.removed.contains(listID) {
@@ -354,6 +353,7 @@ private struct WantsGalleryPhoto: View {
 }
 
 private struct WantsListDetail: View {
+    @ObservedObject var connection: MobileWantConnection
     let client: WantMCPClient
     @State var list: WantList
     @State private var refreshID = 0
@@ -461,7 +461,7 @@ private struct WantsListDetail: View {
 
     private func itemLink(_ item: WantItem) -> some View {
         NavigationLink {
-            WantsAccessView(listID: list.id, client: client) {
+            WantsAccessView(listID: list.id, client: client, connection: connection) {
                 WantsItemDetail(client: client, listID: list.id, itemURL: WantJSON.webURL(list.url(for: item)), item: item, format: list.kind)
             }
         } label: {
