@@ -35,7 +35,7 @@ struct MobileWantsView: View {
                     } footer: {
                         Text("In your list’s settings, open Agents and create a key for msgblast. Paste the wk_ key here.")
                     }
-                    Link("Get a list key on Wants", destination: URL(string: "https://wantmcp.com/app")!)
+                    WantsBrowserLink(destination: URL(string: "https://wantmcp.com/app")!) { Text("Get a list key on Wants") }
                 }
             }
         }
@@ -76,6 +76,21 @@ struct MobileWantsView: View {
     }
 }
 
+private struct WantsBrowserLink<Label: View>: View {
+    let destination: URL
+    @ViewBuilder var label: () -> Label
+    @State private var showingBrowser = false
+
+    var body: some View {
+        Button { showingBrowser = true } label: { label() }
+            .accessibilityRemoveTraits(.isButton)
+            .accessibilityAddTraits(.isLink)
+            .sheet(isPresented: $showingBrowser) {
+                SafariView(url: destination).ignoresSafeArea()
+            }
+    }
+}
+
 private struct WantsLists: View {
     let client: WantMCPClient
     let replaceKey: () -> Void
@@ -98,7 +113,7 @@ private struct WantsLists: View {
                     } description: {
                         Text("Create a list on Wants or connect a key with access to an existing one.")
                     } actions: {
-                        Link("Open my lists on Wants", destination: URL(string: "https://wantmcp.com/app")!)
+                        WantsBrowserLink(destination: URL(string: "https://wantmcp.com/app")!) { Text("Open my lists on Wants") }
                     }
                 }
                 ForEach(lists) { list in
@@ -209,7 +224,7 @@ private struct WantsItemDetail: View {
                 Section(format.entries) {
                     ForEach(entries) { entry in
                         if let url = WantJSON.webURL(entry.link) {
-                            Link(destination: url) { entryLabel(entry) }
+                            WantsBrowserLink(destination: url) { entryLabel(entry) }
                                 .buttonStyle(.plain)
                         } else {
                             entryLabel(entry)
@@ -220,7 +235,7 @@ private struct WantsItemDetail: View {
             if entries?.isEmpty == true && error == nil && item.openQuestion == nil {
                 Section {
                     Text("No \(format.entries.lowercased()) yet").foregroundStyle(.secondary)
-                    if let itemURL { Link("Open item on Wants", destination: itemURL) }
+                    if let itemURL { WantsBrowserLink(destination: itemURL) { Text("Open item on Wants") } }
                 }
             }
             WantsComments(comments: comments.filter { $0.targetId == item.id })
