@@ -5,6 +5,7 @@ struct MobileWantsView: View {
     @State private var key: String?
     @State private var draft = ""
     @FocusState private var editingKey: Bool
+    @State private var replacingKey = false
     @State private var keyRejected = false
     @State private var connecting = false
     @State private var error: String?
@@ -15,12 +16,16 @@ struct MobileWantsView: View {
 
     var body: some View {
         Group {
-            if let key {
-                WantsLists(client: Self.client(key)) { disconnect(replacing: true) }
+            if let key, !replacingKey {
+                WantsLists(client: Self.client(key)) {
+                    replacingKey = true
+                    editingKey = true
+                    keyRejected = true
+                }
                     .id(key)
                     .toolbar {
                         Button("Disconnect", systemImage: "person.crop.circle.badge.minus") {
-                            disconnect(replacing: false)
+                            disconnect()
                         }
                     }
             } else {
@@ -32,6 +37,13 @@ struct MobileWantsView: View {
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                         Button("Connect list") { Task { await connect() } }
                             .disabled(connecting || WantCredential.writeKey(draft) == nil)
+                        if replacingKey {
+                            Button("Cancel", role: .cancel) {
+                                replacingKey = false
+                                keyRejected = false
+                                draft = ""
+                            }.disabled(connecting)
+                        }
                     } footer: {
                         Text("In your list’s settings, open Agents and create a key for msgblast. Paste the wk_ key here.")
                     }
@@ -48,13 +60,13 @@ struct MobileWantsView: View {
         } message: { Text(error ?? "") }
     }
 
-    private func disconnect(replacing: Bool) {
+    private func disconnect() {
         do {
             try WantsKeychain.remove()
             key = nil
             draft = ""
-            keyRejected = replacing
-            editingKey = replacing
+            keyRejected = false
+            editingKey = false
         } catch { self.error = error.localizedDescription }
     }
 
@@ -68,6 +80,7 @@ struct MobileWantsView: View {
             draft = ""
             keyRejected = false
             key = credential.accessToken
+            replacingKey = false
         } catch WantError.unauthorized {
             keyRejected = true
             draft = ""
