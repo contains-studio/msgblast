@@ -39,12 +39,8 @@ public actor ChatGPTAccounts {
 
     /// Exchanges the loopback callback's code, verifies the identity, and makes the account active.
     public func finishSignIn(_ callback: URL, attempt: ChatGPTTokenSharing.Attempt) async throws -> ChatGPTRegistration {
-        let query = Dictionary(URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems?.map { ($0.name, $0.value ?? "") } ?? [], uniquingKeysWith: { a, _ in a })
-        guard query["state"] == attempt.state else { throw ChatGPTSignInError.unverified }
-        if let error = query["error"] { throw error == "access_denied" ? ChatGPTSignInError.declined : .incomplete }
+        let (clientID, code) = try attempt.clientAndCode(callback)
         let saved = attempt.registration
-        if let saved, let issued = query["client_id"], issued != saved.clientID { throw ChatGPTSignInError.incomplete }
-        guard let clientID = saved?.clientID ?? query["client_id"], clientID.hasPrefix("oaiapp_"), let code = query["code"] else { throw ChatGPTSignInError.incomplete }
         let server = try await endpoints()
         let form = ["grant_type": "authorization_code", "client_id": clientID, "code": code, "code_verifier": attempt.verifier,
                     "redirect_uri": attempt.redirect.absoluteString, "resource": ChatGPTTokenSharing.resource]
@@ -58,10 +54,7 @@ public actor ChatGPTAccounts {
             throw json["error"] as? String == "invalid_client" ? ChatGPTSignInError.rejectedClient : .incomplete
         }
         guard let tokens = ChatGPTTokenSharing.tokens(json, now: now()) else { throw ChatGPTSignInError.unverified }
-        var keys = try await ChatGPTTokenSharing.keys(server, session: session)
-        if ChatGPTIDToken.needsNewKeys(tokens.idToken, keys: keys) { keys = try await ChatGPTTokenSharing.keys(server, session: session) }
-        guard let identity = try? ChatGPTIDToken.verify(tokens.idToken, keys: keys, issuer: server.issuer, audience: clientID, nonce: attempt.nonce, now: now())
-        else { throw ChatGPTSignInError.unverified }
+        let identity = try await verify(tokens.idToken, clientID: clientID, nonce: attempt.nonce, server: server)
         let expected = try saved?.subject ?? registration(clientID)?.subject
         guard expected == nil || expected == identity.subject else { throw ChatGPTSignInError.differentAccount }
         let account = ChatGPTRegistration(clientID: clientID, subject: identity.subject, email: identity.email, tokens: tokens)
@@ -132,6 +125,14 @@ public actor ChatGPTAccounts {
         cleared.tokens = nil
         unsaved[account.clientID] = nil
         return (try? save(cleared)) == nil ? .storage : error
+    }
+
+    private func verify(_ idToken: String, clientID: String, nonce: String, server: ChatGPTTokenSharing.Server) async throws -> ChatGPTIDToken.Identity {
+        var keys = try await ChatGPTTokenSharing.keys(server, session: session)
+        if ChatGPTIDToken.needsNewKeys(idToken, keys: keys) { keys = try await ChatGPTTokenSharing.keys(server, session: session) }
+        guard let identity = try? ChatGPTIDToken.verify(idToken, keys: keys, issuer: server.issuer, audience: clientID, nonce: nonce, now: now())
+        else { throw ChatGPTSignInError.unverified }
+        return identity
     }
 
     private func endpoints() async throws -> ChatGPTTokenSharing.Server {
