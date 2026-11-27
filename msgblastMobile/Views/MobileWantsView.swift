@@ -81,7 +81,8 @@ struct MobileWantsView: View {
         }
         .sheet(isPresented: $startingList) {
             StartWantListSheet { title, format in
-                let grant = try await WantClaim.start(title: title, format: format)
+                try await WantClaim.start(title: title, format: format)
+            } save: { grant in
                 connection = try MobileWantConnection.install(grant)
             }
         }
