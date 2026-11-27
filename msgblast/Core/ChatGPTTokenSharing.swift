@@ -59,6 +59,17 @@ public enum ChatGPTTokenSharing {
         /// The saved account signing in again, or nil to register another account.
         public let registration: ChatGPTRegistration?
         var challenge: String { WantOAuth.base64URL(Data(SHA256.hash(data: Data(verifier.utf8)))) }
+
+        /// The client id and code from the loopback callback, after checking `state`. A reauthorization
+        /// keeps its saved client id; a new registration must return the `oaiapp_` id OpenAI issued.
+        func clientAndCode(_ callback: URL) throws -> (clientID: String, code: String) {
+            let query = Dictionary(URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems?.map { ($0.name, $0.value ?? "") } ?? [], uniquingKeysWith: { a, _ in a })
+            guard query["state"] == state else { throw ChatGPTSignInError.unverified }
+            if let error = query["error"] { throw error == "access_denied" ? ChatGPTSignInError.declined : .incomplete }
+            if let saved = registration?.clientID, let issued = query["client_id"], issued != saved { throw ChatGPTSignInError.incomplete }
+            guard let clientID = registration?.clientID ?? query["client_id"], clientID.hasPrefix("oaiapp_"), let code = query["code"] else { throw ChatGPTSignInError.incomplete }
+            return (clientID, code)
+        }
     }
 
     public static func authorizeURL(_ server: Server, attempt: Attempt, hostID: String) -> URL {
