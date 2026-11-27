@@ -144,43 +144,216 @@ private struct WantsLists: View {
     }
 }
 
+private extension WantFormat {
+    var addTitle: String {
+        switch self { case .shopping: "Add want"; case .tasks: "Add task"; case .research: "Ask a question" }
+    }
+    var placeholder: String {
+        switch self {
+        case .shopping: "e.g. A quiet dehumidifier"
+        case .tasks: "e.g. Get three moving quotes"
+        case .research: "e.g. Is a heat pump worth it?"
+        }
+    }
+    func entryCount(_ count: Int) -> String {
+        let noun: String = switch self { case .shopping: "product"; case .tasks: "update"; case .research: "answer" }
+        return "\(count) \(noun)\(count == 1 ? "" : "s")"
+    }
+}
+
+private struct WantsLook {
+    enum Template: String { case sheet, today, doc, board, sections, heat, tracker, gallery }
+    let template: Template
+    let occasion: (name: String, icon: String, color: Color)?
+
+    init(list: WantList) {
+        let parts = (list.theme ?? "").lowercased().components(separatedBy: "--")
+        let slug = parts[0]
+        let fallback: Template = switch list.kind { case .shopping: .sheet; case .tasks: .today; case .research: .doc }
+        template = slug == "checklist" ? .today : Template(rawValue: slug) ?? fallback
+        occasion = switch parts.count > 1 ? parts[1] : slug {
+        case "birthday": ("Birthday", "birthday.cake", .pink)
+        case "black-friday": ("Black Friday", "tag", .purple)
+        case "cyber-monday": ("Cyber Monday", "bolt", .blue)
+        case "chanukah", "hanukkah": ("Chanukah", "flame", .blue)
+        case "christmas": ("Christmas", "tree", .green)
+        case "kwanzaa": ("Kwanzaa", "flame", .orange)
+        case "new-year": ("New Year", "sparkles", .purple)
+        case "valentines": ("Valentine’s Day", "heart", .pink)
+        case "halloween": ("Halloween", "moon.stars", .orange)
+        default: nil
+        }
+    }
+}
+
+private struct WantsGalleryPhoto: View {
+    let client: WantMCPClient
+    let item: WantItem
+    @State private var photo: URL?
+
+    var body: some View {
+        Group {
+            if let photo {
+                AsyncImage(url: photo) { phase in
+                    if let image = phase.image {
+                        image.resizable().scaledToFit().frame(maxWidth: .infinity).frame(height: 108)
+                            .background(.white, in: RoundedRectangle(cornerRadius: 12))
+                    }
+                }
+            } else { Color.clear.frame(height: 0) }
+        }
+        .task(id: item) {
+            photo = nil
+            guard item.entryCounts.listed > 0 else { return }
+            let entries: [WantEntry]
+            if let included = item.entries { entries = included }
+            else { entries = (try? await client.entries(itemID: item.id)) ?? [] }
+            guard !Task.isCancelled else { return }
+            let listed = entries.filter { $0.status == "listed" }
+            let best = listed.first { $0.id == item.bestPrice?.entryId }
+            photo = WantJSON.webURL(best?.imageUrl) ?? listed.lazy.compactMap { WantJSON.webURL($0.imageUrl) }.first
+        }
+        .accessibilityHidden(true)
+    }
+}
+
 private struct WantsListDetail: View {
     let client: WantMCPClient
     @State var list: WantList
     @State private var comments: [WantComment] = []
     @State private var error: String?
 
+    private var look: WantsLook { WantsLook(list: list) }
+    private var items: [WantItem] { list.items ?? [] }
+
     var body: some View {
         List {
             if let error { Text(error).foregroundStyle(.secondary) }
             Section {
-                WantsSubmission(title: "Add item", placeholder: "What would you like to add?") { text in
+                WantsSubmission(title: list.kind.addTitle, placeholder: list.kind.placeholder) { text in
                     _ = try await client.addItem(listID: list.id, text: text)
                     await refresh()
                 }
+            } header: {
+                if let occasion = look.occasion {
+                    Label(occasion.name, systemImage: occasion.icon).foregroundStyle(occasion.color)
+                }
             }
-            Section {
-                ForEach(list.items ?? []) { item in
-                    NavigationLink { WantsItemDetail(client: client, listID: list.id, itemURL: WantJSON.webURL(list.url(for: item)), item: item, format: list.kind) } label: {
-                        VStack(alignment: .leading) {
-                            Text(item.text)
-                            if item.openQuestion != nil {
-                                Text(WantFormat.waiting).font(.caption).foregroundStyle(.secondary)
-                            } else if list.kind == .shopping && item.entryCounts.listed > 0 {
-                                Text(item.entryCounts.listed == 1 ? "1 offer" : "\(item.entryCounts.listed) offers")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
+            if !items.isEmpty {
+                if look.template == .board {
+                    Section {
+                        ScrollView(.horizontal) {
+                            HStack(alignment: .top, spacing: 12) {
+                                ForEach(groups, id: \.self) { group in
+                                    let members = items.filter { groupName($0) == group }
+                                    VStack(alignment: .leading, spacing: 10) {
+                                        Text("\(group) · \(members.count)").font(.headline)
+                                        ForEach(members) { item in
+                                            itemLink(item).buttonStyle(.plain)
+                                                .padding(10).background(.background, in: RoundedRectangle(cornerRadius: 10))
+                                        }
+                                        if members.isEmpty { Text("Nothing here").foregroundStyle(.secondary) }
+                                    }
+                                    .padding(12).containerRelativeFrame(.horizontal) { width, _ in width * 0.88 }
+                                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 14))
+                                }
+                            }.scrollTargetLayout()
+                        }.scrollTargetBehavior(.viewAligned)
+                    }.listRowInsets(EdgeInsets()).listRowBackground(Color.clear)
+                } else if [.sections, .heat].contains(look.template) {
+                    ForEach(groups, id: \.self) { group in
+                        let members = items.filter { groupName($0) == group }
+                        if !members.isEmpty {
+                            Section {
+                                ForEach(members) { item in itemLink(item) }
+                            } header: { Text("\(group) · \(members.count)") }
                         }
                     }
+                } else {
+                    itemSection(items.filter { !$0.isFinished }, title: list.kind.item + "s")
+                    itemSection(items.filter(\.isFinished), title: list.kind.finished)
                 }
-            } header: {
-                if list.items?.isEmpty == false { Text("Items") }
             }
             WantsComments(comments: comments.filter { $0.targetId == list.id })
         }
+        .tint(look.occasion?.color ?? .accentColor)
         .navigationTitle(list.title)
         .wantsActivity(client: client, refresh: refresh)
         .refreshable { await refresh() }
+    }
+
+    private func groupName(_ item: WantItem) -> String {
+        if item.isFinished { return list.kind.finished }
+        if item.openQuestion != nil || item.status == "waiting_on_owner" { return WantFormat.waiting }
+        if list.kind != .shopping && item.status == "in_progress" { return "In progress" }
+        return "Open"
+    }
+
+    private var groups: [String] {
+        var names = items.contains { groupName($0) == WantFormat.waiting } ? [WantFormat.waiting] : []
+        let active = look.template == .board ? ["Open", "In progress"] : ["In progress", "Open"]
+        names += list.kind == .shopping ? ["Open"] : active
+        return names + [list.kind.finished]
+    }
+
+    @ViewBuilder private func itemSection(_ members: [WantItem], title: String) -> some View {
+        if !members.isEmpty {
+            Section(title) {
+                if look.template == .gallery {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 145))], alignment: .leading, spacing: 16) {
+                        ForEach(members) { item in itemLink(item).buttonStyle(.plain) }
+                    }
+                    .listRowBackground(Color.clear)
+                } else {
+                    ForEach(members) { item in itemLink(item) }
+                }
+            }
+        }
+    }
+
+    private func itemLink(_ item: WantItem) -> some View {
+        NavigationLink {
+            WantsItemDetail(client: client, listID: list.id, itemURL: WantJSON.webURL(list.url(for: item)), item: item, format: list.kind)
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                if look.template == .gallery && list.kind == .shopping {
+                    WantsGalleryPhoto(client: client, item: item)
+                }
+                HStack(alignment: .firstTextBaseline) {
+                    if look.template == .today {
+                        Image(systemName: item.isFinished ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(.secondary).accessibilityHidden(true)
+                    }
+                    Text(item.text)
+                        .font(look.template == .doc ? .system(.headline, design: .serif) : .body)
+                        .fontWeight([.gallery, .heat, .board].contains(look.template) ? .semibold : .regular)
+                }
+                let count = item.entryCounts.listed
+                let phase = groupName(item)
+                let grouped = [.board, .sections, .heat].contains(look.template)
+                let parts = [!grouped && [WantFormat.waiting, "In progress"].contains(phase) ? phase : nil,
+                             item.claimedBy?.label, item.bestPrice?.formatted, count > 0 ? list.kind.entryCount(count) : nil].compactMap { $0 }
+                if let due = item.dueAt, !item.isFinished {
+                    Label(due.formatted(date: .abbreviated, time: .omitted), systemImage: "calendar")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if !parts.isEmpty {
+                    Text(parts.joined(separator: " · "))
+                        .font(look.template == .tracker ? .system(.caption, design: .monospaced) : .caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }
+        .listRowBackground(look.template == .heat && !item.isFinished ? heatColor(item).opacity(0.14) : nil)
+    }
+
+    private func heatColor(_ item: WantItem) -> Color {
+        switch groupName(item) {
+        case WantFormat.waiting: .orange
+        case "In progress": .yellow
+        default: .blue
+        }
     }
 
     private func refresh() async {

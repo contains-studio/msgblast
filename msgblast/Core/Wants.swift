@@ -68,6 +68,14 @@ public struct WantItem: Codable, Hashable, Identifiable, Sendable {
     public var entryCounts: Counts, commentCount: Int
     /// `open`, `in_progress`, `waiting_on_owner` or `done` on servers with list formats. The compact
     /// `get_list` sends `details_preview` instead of `details`.
+    public struct Finish: Codable, Hashable, Sendable { public var entryId: String? }
+    public struct BestPrice: Codable, Hashable, Sendable {
+        public var entryId: String, price: String, currency: String
+        public var formatted: String { WantPrice.format(price, currency: currency) }
+    }
+    public var bestPrice: BestPrice?, dueAt: Date?
+    public var purchase: Finish?, completion: Finish?
+    public var isFinished: Bool { status == "done" || purchase != nil || completion != nil }
     public var details: String?, detailsPreview: String?, status: String?, claimedBy: WantActor?
     /// An agent's question to the person; the item waits on them until it is answered.
     public var openQuestion: WantQuestion?
@@ -84,7 +92,7 @@ public struct WantList: Codable, Hashable, Identifiable, Sendable {
     public var id: String, url: String, title: String, ownerHandle: String, itemCount: Int
     public var items: [WantItem]?
     /// `shopping`, `tasks` or `research`, and `public` or `private`. Older servers left them out.
-    public var format: String?, visibility: String?
+    public var format: String?, visibility: String?, theme: String?
     /// The server's instructions for agents working this list's format.
     public var howToWork: String?
     public var kind: WantFormat { format.flatMap(WantFormat.init(rawValue:)) ?? .shopping }
