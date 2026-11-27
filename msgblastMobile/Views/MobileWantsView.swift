@@ -300,8 +300,15 @@ private struct WantsListDetail: View {
         if !members.isEmpty {
             Section(title) {
                 if look.template == .gallery {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 145))], alignment: .leading, spacing: 16) {
-                        ForEach(members) { item in itemLink(item).buttonStyle(.plain) }
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), alignment: .topLeading)], alignment: .leading, spacing: 16) {
+                        ForEach(members) { item in
+                            itemLink(item)
+                                .navigationLinkIndicatorVisibility(.hidden)
+                                .buttonStyle(.plain)
+                                .padding(10)
+                                .frame(maxWidth: .infinity, alignment: .topLeading)
+                                .background(.background, in: RoundedRectangle(cornerRadius: 12))
+                        }
                     }
                     .listRowBackground(Color.clear)
                 } else {
