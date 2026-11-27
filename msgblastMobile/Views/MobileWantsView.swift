@@ -5,6 +5,8 @@ struct MobileWantsView: View {
     @State private var key: String?
     @State private var draft = ""
     @FocusState private var editingKey: Bool
+    @State private var showingKeyForm = false
+    @State private var showingWantsSite = false
     @State private var replacingKey = false
     @State private var keyRejected = false
     @State private var connecting = false
@@ -28,7 +30,7 @@ struct MobileWantsView: View {
                             disconnect()
                         }
                     }
-            } else {
+            } else if showingKeyForm || replacingKey {
                 Form {
                     Section {
                         if keyRejected { Text("This list key was rejected. Paste a new key from your list’s settings.").foregroundStyle(.secondary) }
@@ -37,17 +39,39 @@ struct MobileWantsView: View {
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                         Button("Connect list") { Task { await connect() } }
                             .disabled(connecting || WantCredential.writeKey(draft) == nil)
-                        if replacingKey {
-                            Button("Cancel", role: .cancel) {
-                                replacingKey = false
-                                keyRejected = false
-                                draft = ""
-                            }.disabled(connecting)
-                        }
+                        Button("Cancel", role: .cancel) {
+                            showingKeyForm = false
+                            replacingKey = false
+                            keyRejected = false
+                            draft = ""
+                        }.disabled(connecting)
                     } footer: {
                         Text("In your list’s settings, open Agents and create a key for msgblast. Paste the wk_ key here.")
                     }
                     WantsBrowserLink(destination: URL(string: "https://wantmcp.com/app")!) { Text("Get a list key on Wants") }
+                }
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Image(systemName: "checklist")
+                            .font(.largeTitle).foregroundStyle(.tint).accessibilityHidden(true)
+                        Text("What do you want help with?")
+                            .font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
+                        Text("Make a list of things to buy, tasks to finish, or questions to answer. Give it to an agent, then review the products, updates, or answers it brings back.")
+                            .foregroundStyle(.secondary)
+                        Button {
+                            showingWantsSite = true
+                        } label: {
+                            Text("Set up The Want MCP").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent).controlSize(.large).padding(.top, 12)
+                        Button("I already have a list key") { showingKeyForm = true }
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .frame(maxWidth: 420).padding(24).frame(maxWidth: .infinity)
+                }
+                .sheet(isPresented: $showingWantsSite, onDismiss: { showingKeyForm = true }) {
+                    SafariView(url: URL(string: "https://wantmcp.com/app")!).ignoresSafeArea()
                 }
             }
         }
@@ -64,6 +88,7 @@ struct MobileWantsView: View {
         do {
             try WantsKeychain.remove()
             key = nil
+            showingKeyForm = false
             draft = ""
             keyRejected = false
             editingKey = false
