@@ -96,6 +96,7 @@ private struct WantsLists: View {
     let replaceKey: () -> Void
     @State private var keyRejected = false
     @State private var lists: [WantList]?
+    @State private var refreshID = 0
     @State private var error: String?
 
     var body: some View {
@@ -128,19 +129,22 @@ private struct WantsLists: View {
     }
 
     private func refresh() async {
+        refreshID += 1
+        let request = refreshID
         do {
             var result: [WantList] = []
             for id in try await client.writableListIDs() { result.append(try await client.list(id)) }
             try Task.checkCancellation()
+            guard request == refreshID else { return }
             lists = result
             keyRejected = false
             error = nil
         } catch WantError.unauthorized {
-            guard !Task.isCancelled else { return }
+            guard request == refreshID, !Task.isCancelled else { return }
             lists = nil
             error = nil
             keyRejected = true
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        } catch { if request == refreshID && !Task.isCancelled { self.error = error.localizedDescription } }
     }
 }
 
@@ -193,6 +197,17 @@ private struct WantsGalleryPhoto: View {
     let item: WantItem
     @State private var photo: URL?
 
+    let retry: Int
+    @State private var imageAttempt = 0
+
+    private struct Lookup: Equatable {
+        let id: String
+        let count: Int
+        let best: String?
+        let images: [String?]?
+        let retry: Int
+    }
+
     var body: some View {
         Group {
             if let photo {
@@ -200,16 +215,20 @@ private struct WantsGalleryPhoto: View {
                     if let image = phase.image {
                         image.resizable().scaledToFit().frame(maxWidth: .infinity).frame(height: 108)
                             .background(.white, in: RoundedRectangle(cornerRadius: 12))
+                    } else if phase.error != nil {
+                        Color.clear.frame(height: 0).onChange(of: retry) { imageAttempt += 1 }
                     }
                 }
+                .id(imageAttempt)
             } else { Color.clear.frame(height: 0) }
         }
-        .task(id: item) {
-            photo = nil
-            guard item.entryCounts.listed > 0 else { return }
+        .task(id: Lookup(id: item.id, count: item.entryCounts.listed, best: item.bestPrice?.entryId,
+                         images: item.entries?.map(\.imageUrl), retry: retry)) {
+            guard item.entryCounts.listed > 0 else { photo = nil; return }
             let entries: [WantEntry]
             if let included = item.entries { entries = included }
-            else { entries = (try? await client.entries(itemID: item.id)) ?? [] }
+            else if let fetched = try? await client.entries(itemID: item.id) { entries = fetched }
+            else { return }
             guard !Task.isCancelled else { return }
             let listed = entries.filter { $0.status == "listed" }
             let best = listed.first { $0.id == item.bestPrice?.entryId }
@@ -222,9 +241,11 @@ private struct WantsGalleryPhoto: View {
 private struct WantsListDetail: View {
     let client: WantMCPClient
     @State var list: WantList
+    @State private var refreshID = 0
     @State private var comments: [WantComment] = []
     @State private var error: String?
 
+    @State private var galleryRetry = 0
     private var look: WantsLook { WantsLook(list: list) }
     private var items: [WantItem] { list.items ?? [] }
 
@@ -281,7 +302,10 @@ private struct WantsListDetail: View {
         .tint(look.occasion?.color ?? .accentColor)
         .navigationTitle(list.title)
         .wantsActivity(client: client, refresh: refresh)
-        .refreshable { await refresh() }
+        .refreshable {
+            galleryRetry += 1
+            _ = await refresh()
+        }
     }
 
     private func groupName(_ item: WantItem) -> String {
@@ -326,7 +350,7 @@ private struct WantsListDetail: View {
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 if look.template == .gallery && list.kind == .shopping {
-                    WantsGalleryPhoto(client: client, item: item)
+                    WantsGalleryPhoto(client: client, item: item, retry: galleryRetry)
                 }
                 HStack(alignment: .firstTextBaseline) {
                     if look.template == .today {
@@ -365,12 +389,21 @@ private struct WantsListDetail: View {
         }
     }
 
-    private func refresh() async {
+    @discardableResult private func refresh() async -> Bool {
+        refreshID += 1
+        let request = refreshID
         do {
-            list = try await client.list(list.id)
-            comments = try await client.comments(listID: list.id)
+            let updated = try await client.list(list.id)
+            let notes = try await client.comments(listID: list.id)
+            guard request == refreshID, !Task.isCancelled else { return false }
+            list = updated
+            comments = notes
             error = nil
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+            return true
+        } catch {
+            if request == refreshID && !Task.isCancelled { self.error = error.localizedDescription }
+            return false
+        }
     }
 }
 
@@ -381,6 +414,7 @@ private struct WantsItemDetail: View {
     @State var item: WantItem
     let format: WantFormat
     @State private var entries: [WantEntry]?
+    @State private var refreshID = 0
     @State private var comments: [WantComment] = []
     @State private var error: String?
 
@@ -441,7 +475,7 @@ private struct WantsItemDetail: View {
             ForEach(Array((entry.links ?? []).enumerated()), id: \.offset) { _, address in
                 if let url = WantJSON.webURL(address) {
                     WantsBrowserLink(destination: url) {
-                        Label((url.host() ?? url.absoluteString) + url.path,
+                        Label(url.absoluteString.components(separatedBy: "://").dropFirst().joined(separator: "://"),
                               systemImage: "link")
                             .lineLimit(2).frame(minHeight: 44, alignment: .leading)
                     }
@@ -523,13 +557,23 @@ private struct WantsItemDetail: View {
         .accessibilityHidden(true)
     }
 
-    private func refresh() async {
+    @discardableResult private func refresh() async -> Bool {
+        refreshID += 1
+        let request = refreshID
         do {
-            entries = try await client.entries(itemID: item.id)
-            comments = try await client.comments(listID: listID)
-            if let updated = try await client.list(listID, full: format == .research).items?.first(where: { $0.id == item.id }) { item = updated }
+            let updatedEntries = try await client.entries(itemID: item.id)
+            let notes = try await client.comments(listID: listID)
+            let updated = try await client.list(listID, full: format == .research).items?.first { $0.id == item.id }
+            guard request == refreshID, !Task.isCancelled else { return false }
+            entries = updatedEntries
+            comments = notes
+            if let updated { item = updated }
             error = nil
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+            return true
+        } catch {
+            if request == refreshID && !Task.isCancelled { self.error = error.localizedDescription }
+            return false
+        }
     }
 }
 
@@ -592,14 +636,14 @@ private struct WantsSubmission: View {
 }
 
 private extension View {
-    func wantsActivity(client: WantMCPClient, refresh: @escaping @MainActor () async -> Void) -> some View {
+    func wantsActivity(client: WantMCPClient, refresh: @escaping @MainActor () async -> Bool) -> some View {
         modifier(WantsActivity(client: client, refresh: refresh))
     }
 }
 
 private struct WantsActivity: ViewModifier {
     let client: WantMCPClient
-    let refresh: @MainActor () async -> Void
+    let refresh: @MainActor () async -> Bool
     @Environment(\.scenePhase) private var phase
 
     func body(content: Content) -> some View {
@@ -611,7 +655,13 @@ private struct WantsActivity: ViewModifier {
                 do {
                     let page = try await client.poll("list.activity", cursor: cursor)
                     try Task.checkCancellation()
-                    if initial || page.hasActivity { await refresh() }
+                    if initial || page.hasActivity {
+                        guard await refresh() else {
+                            initial = true
+                            try await Task.sleep(for: .seconds(2))
+                            continue
+                        }
+                    }
                     initial = false
                     let advanced = page.cursor != cursor
                     cursor = page.cursor
@@ -619,7 +669,7 @@ private struct WantsActivity: ViewModifier {
                     try await Task.sleep(for: .seconds(delay))
                 } catch {
                     guard !Task.isCancelled else { return }
-                    await refresh()
+                    _ = await refresh()
                     try? await Task.sleep(for: .seconds(30))
                 }
             }
