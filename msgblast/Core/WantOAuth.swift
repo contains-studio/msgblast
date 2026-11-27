@@ -5,6 +5,7 @@ import Network
 /// What msgblast keeps in the Keychain for The Want MCP: an OAuth grant for the lists the
 /// person ticked, or a pasted write key for one list.
 public struct WantCredential: Codable, Equatable, Sendable {
+    public var claim: WantClaim?
     public var grantID: UUID?
     public var accessToken: String
     public var endpoint: URL?

@@ -187,6 +187,32 @@ import msgblastRemoteProtocol
         signingIn = false
     }
 
+    var claim: WantClaim? { credential?.claim }
+
+    func startList(title: String, format: WantFormat) async throws -> WantCredential {
+        guard canSave else { throw WantError.server("Wants settings could not be read. The existing file has been preserved.") }
+        guard !signedIn, !signingIn else { throw CancellationError() }
+        if app.demo {
+            let fixture = WantFixture()
+            service = fixture
+            return await fixture.startList(title: title, format: format)
+        } else {
+            guard keychain.endpoint == WantOAuth.resource else { throw WantError.server("Start a list requires The Want MCP.") }
+            return try await WantClaim.start(title: title, format: format)
+        }
+    }
+
+    func saveStartedList(_ grant: WantCredential) throws {
+        guard !signedIn, !signingIn else { throw CancellationError() }
+        guard store(grant) else { throw WantError.server("The list was created. Retry saving it on this Mac.") }
+    }
+
+    func keepList(_ claim: WantClaim) {
+        guard credential?.claim == claim, claim.active else { return }
+        if app.demo { credential?.claim = nil; objectWillChange.send() }
+        else { NSWorkspace.shared.open(claim.url) }
+    }
+
     func useWriteKey(_ text: String) -> Bool {
         guard !signedIn, !signingIn else { return false }
         guard let credential = WantCredential.writeKey(text) else { error = "That isn't a write key. Keys start with wk_."; return false }

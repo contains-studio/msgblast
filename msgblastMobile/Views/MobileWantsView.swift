@@ -8,6 +8,7 @@ struct MobileWantsView: View {
     @State private var operation: Task<Void, Never>?
     @State private var draft = ""
     @FocusState private var editingKey: Bool
+    @State private var startingList = false
     @State private var showingKeyForm = false
     @State private var replacingKey = false
     @State private var keyRejected = false
@@ -21,7 +22,7 @@ struct MobileWantsView: View {
     var body: some View {
         Group {
             if let connection, !replacingKey {
-                WantsLists(client: client(connection)) {
+                WantsLists(client: client(connection), claim: connection.grant.claim) {
                     replacingKey = true
                     editingKey = true
                     keyRejected = true
@@ -67,12 +68,22 @@ struct MobileWantsView: View {
                             Text("Connect with The Want MCP").frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent).controlSize(.large).padding(.top, 12)
+                        Button("Start a list") { startingList = true }
+                            .frame(maxWidth: .infinity, minHeight: 44)
                         Button("I already have a list key") { showingKeyForm = true }
                             .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .frame(maxWidth: 420).padding(24).frame(maxWidth: .infinity)
                 }
                 .disabled(connecting)
+            }
+        }
+        .sheet(isPresented: $startingList) {
+            StartWantListSheet { title, format in
+                try await WantClaim.start(title: title, format: format)
+            } save: { grant in
+                try WantsKeychain.save(grant)
+                connection = MobileWantConnection(grant)
             }
         }
         .navigationTitle("Wants")
@@ -168,6 +179,7 @@ private struct WantsBrowserLink<Label: View>: View {
 
 private struct WantsLists: View {
     let client: WantMCPClient
+    let claim: WantClaim?
     let replaceKey: () -> Void
     @State private var keyRejected = false
     @State private var lists: [WantList]?
@@ -176,6 +188,13 @@ private struct WantsLists: View {
 
     var body: some View {
         List {
+            if let claim, claim.active, !keyRejected {
+                Section {
+                    WantsBrowserLink(destination: claim.url) { Text("Keep this list") }
+                } footer: {
+                    Text("Keep your private list before \(claim.expiresAt.formatted()) or it will expire.")
+                }
+            }
             if keyRejected {
                 Section {
                     Text("This list key no longer has access.")
