@@ -219,6 +219,7 @@ final class AppLifecycle: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
             model.personalAgent.beginShutdown()
             model.webAgents.beginShutdown()
             await model.personalAgent.cancelAndWait()
+            await model.msgblastAgent.close()
             await model.webAgents.cancelAndWait()
             await EmbeddedCuaDriver.shared.stop()
             completeTerminationReply(sender, allowed: true)

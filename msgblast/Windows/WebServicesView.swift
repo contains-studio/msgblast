@@ -177,6 +177,7 @@ struct AgentsWorkspaceView: View {
             let unsentAgents = unsentMessageAgents
             let columns = comparisonChatCount
             let width = max(320, (geometry.size.width - CGFloat(max(0, columns - 1))) / CGFloat(max(1, columns)))
+            ScrollViewReader { proxy in
             ScrollView(.horizontal) {
                 HStack(spacing: 0) {
                     ForEach(displayedSessions, id: \.id) { session in
@@ -220,6 +221,13 @@ struct AgentsWorkspaceView: View {
                     }
                 }.frame(height: geometry.size.height)
             }.scrollIndicators(.visible)
+            // A msgblast agent link scrolls to the agent it names, once its comparison shows.
+            .task(id: model.paneFocus?.request) {
+                guard let focus = model.paneFocus, focus.comparisonID == nativeComparison?.id else { return }
+                try? await Task.sleep(for: .milliseconds(150))
+                withAnimation { proxy.scrollTo(focus.paneID, anchor: .center) }
+            }
+            }
         }
     }
 
