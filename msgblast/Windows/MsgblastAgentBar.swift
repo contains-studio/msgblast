@@ -126,9 +126,9 @@ struct MsgblastAgentBar: View {
     private func send() {
         let text = draft
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        draft = ""
         withAnimation(.snappy) { expanded = true }
         agent.send(text)
+        if agent.isWorking { draft = "" }
     }
 
     /// Opens a comparison link in the grid and scrolls to its `agent`; https opens in the browser; anything else is ignored.
