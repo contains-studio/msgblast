@@ -160,41 +160,50 @@ public final class ClaudeAgentSession: MsgblastAgentRunner, @unchecked Sendable 
     private func handle(_ line: Data) {
         guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { return }
         switch object["type"] as? String {
-        case "system" where object["subtype"] as? String == "init":
-            let servers = object["mcp_servers"] as? [[String: Any]] ?? []
-            let connected = servers.contains { $0["name"] as? String == "msgblast" && $0["status"] as? String == "connected" }
-            let foreign = (object["tools"] as? [String] ?? []).contains { !$0.hasPrefix(Self.toolPrefix) }
-            if connected && !foreign { return }
-            finish(.failed(connected ? "Claude Code offered tools other than msgblast's, so msgblast stopped it. Nothing was sent."
-                                     : "msgblast's tools did not connect to Claude Code. Nothing was sent."), ending: Self.endedMessage)
-            shutdown()
-        case "stream_event":
-            let event = object["event"] as? [String: Any] ?? [:]
-            if let delta = event["delta"] as? [String: Any], delta["type"] as? String == "text_delta", let text = delta["text"] as? String {
-                yield(.text(text))
-            }
-            if let block = event["content_block"] as? [String: Any], block["type"] as? String == "tool_use",
-               let id = block["id"] as? String, let name = block["name"] as? String {
-                let tool = name.hasPrefix(Self.toolPrefix) ? String(name.dropFirst(Self.toolPrefix.count)) : name
-                lock.withLock { tools[id] = tool }
-                yield(.tool(name: tool, finished: false, failed: false))
-            }
-        case "user":
-            let content = (object["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
-            for block in content where block["type"] as? String == "tool_result" {
-                guard let id = block["tool_use_id"] as? String, let tool = lock.withLock({ tools.removeValue(forKey: id) }) else { continue }
-                yield(.tool(name: tool, finished: true, failed: block["is_error"] as? Bool == true))
-            }
-        case "result":
-            if object["is_error"] as? Bool == false, let id = object["session_id"] as? String, UUID(uuidString: id) != nil {
-                finish(.completed(sessionID: id))
-            } else if lock.withLock({ interrupted }) {
-                finish(.failed("Stopped. Claude Code may have finished some tool calls before it stopped."))
-            } else {
-                let detail = (object["result"] as? String).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
-                finish(.failed(detail.isEmpty ? "Claude Code could not finish this request." : detail))
-            }
+        case "system" where object["subtype"] as? String == "init": checkTools(object)
+        case "stream_event": stream(object["event"] as? [String: Any] ?? [:])
+        case "user": toolResults((object["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? [])
+        case "result": result(object)
         default: break
+        }
+    }
+
+    private func checkTools(_ object: [String: Any]) {
+        let servers = object["mcp_servers"] as? [[String: Any]] ?? []
+        let connected = servers.contains { $0["name"] as? String == "msgblast" && $0["status"] as? String == "connected" }
+        let foreign = (object["tools"] as? [String] ?? []).contains { !$0.hasPrefix(Self.toolPrefix) }
+        if connected && !foreign { return }
+        finish(.failed(connected ? "Claude Code offered tools other than msgblast's, so msgblast stopped it. Nothing was sent."
+                                 : "msgblast's tools did not connect to Claude Code. Nothing was sent."), ending: Self.endedMessage)
+        shutdown()
+    }
+
+    private func stream(_ event: [String: Any]) {
+        if let delta = event["delta"] as? [String: Any], delta["type"] as? String == "text_delta", let text = delta["text"] as? String {
+            yield(.text(text))
+        }
+        guard let block = event["content_block"] as? [String: Any], block["type"] as? String == "tool_use",
+              let id = block["id"] as? String, let name = block["name"] as? String else { return }
+        let tool = name.hasPrefix(Self.toolPrefix) ? String(name.dropFirst(Self.toolPrefix.count)) : name
+        lock.withLock { tools[id] = tool }
+        yield(.tool(name: tool, finished: false, failed: false))
+    }
+
+    private func toolResults(_ content: [[String: Any]]) {
+        for block in content where block["type"] as? String == "tool_result" {
+            guard let id = block["tool_use_id"] as? String, let tool = lock.withLock({ tools.removeValue(forKey: id) }) else { continue }
+            yield(.tool(name: tool, finished: true, failed: block["is_error"] as? Bool == true))
+        }
+    }
+
+    private func result(_ object: [String: Any]) {
+        if object["is_error"] as? Bool == false, let id = object["session_id"] as? String, UUID(uuidString: id) != nil {
+            finish(.completed(sessionID: id))
+        } else if lock.withLock({ interrupted }) {
+            finish(.failed("Stopped. Claude Code may have finished some tool calls before it stopped."))
+        } else {
+            let detail = (object["result"] as? String).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+            finish(.failed(detail.isEmpty ? "Claude Code could not finish this request." : detail))
         }
     }
 
