@@ -31,3 +31,7 @@ settings on wantmcp.com, open **Agents**, choose **Other**, and enter msgblast
 as the agent name. Create the key, expand **Show all**, and paste the write key
 into **Connect list** on the phone. The iPhone connects directly to the Wants
 server and stores the key in its own Keychain. Disconnect from the Wants toolbar.
+
+Open a list to add an item. Open an item with **Waiting on you** to choose
+an offered answer or write your own. Open lists and items check for new activity
+while the app is active. Pull down to refresh immediately.

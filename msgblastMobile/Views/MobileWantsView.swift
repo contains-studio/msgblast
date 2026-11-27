@@ -98,6 +98,12 @@ private struct WantsListDetail: View {
     var body: some View {
         List {
             if let error { Text(error).foregroundStyle(.secondary) }
+            Section {
+                WantsSubmission(title: "Add item", placeholder: "What would you like to add?") { text in
+                    _ = try await client.addItem(listID: list.id, text: text)
+                    await refresh()
+                }
+            }
             Section("Items") {
                 ForEach(list.items ?? []) { item in
                     NavigationLink { WantsItemDetail(client: client, listID: list.id, item: item, format: list.kind) } label: {
@@ -112,7 +118,7 @@ private struct WantsListDetail: View {
             WantsComments(comments: comments.filter { $0.targetId == list.id })
         }
         .navigationTitle(list.title)
-        .task { await refresh() }
+        .wantsActivity(client: client, refresh: refresh)
         .refreshable { await refresh() }
     }
 
@@ -140,7 +146,17 @@ private struct WantsItemDetail: View {
                 Text(item.text).font(.headline)
                 if let details = item.details ?? item.detailsPreview { Text(details) }
             }
-            if let question = item.openQuestion { Section(WantFormat.waiting) { Text(question.text) } }
+            if let question = item.openQuestion {
+                Section(WantFormat.waiting) {
+                    Text(question.text)
+                    WantsSubmission(title: "Send answer", placeholder: "Your answer", options: question.options ?? []) { text in
+                        try await client.answer(questionID: question.id, text: text)
+                        item.openQuestion = nil
+                        await refresh()
+                    }
+                    .id(question.id)
+                }
+            }
             Section(format.entries) {
                 ForEach(entries) { entry in
                     VStack(alignment: .leading) {
@@ -156,7 +172,7 @@ private struct WantsItemDetail: View {
             if let error { Text(error).foregroundStyle(.secondary) }
         }
         .navigationTitle(format.item)
-        .task { await refresh() }
+        .wantsActivity(client: client, refresh: refresh)
         .refreshable { await refresh() }
     }
 
@@ -180,6 +196,75 @@ private struct WantsComments: View {
                         Text(comment.author.label).font(.caption).foregroundStyle(.secondary)
                         Text(comment.body)
                     }
+                }
+            }
+        }
+    }
+}
+
+private struct WantsSubmission: View {
+    let title: String
+    let placeholder: String
+    var options: [String] = []
+    let submit: (String) async throws -> Void
+    @State private var draft = ""
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        ForEach(options, id: \.self) { option in
+            Button(option) { send(option) }.disabled(busy)
+        }
+        TextField(placeholder, text: $draft, axis: .vertical).disabled(busy)
+        Button(title) { send(draft) }
+            .disabled(busy || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        if let error { Text(error).font(.footnote).foregroundStyle(.secondary) }
+    }
+
+    private func send(_ text: String) {
+        guard !busy else { return }
+        busy = true
+        error = nil
+        Task {
+            defer { busy = false }
+            do {
+                try await submit(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                draft = ""
+            } catch { self.error = error.localizedDescription }
+        }
+    }
+}
+
+private extension View {
+    func wantsActivity(client: WantMCPClient, refresh: @escaping @MainActor () async -> Void) -> some View {
+        modifier(WantsActivity(client: client, refresh: refresh))
+    }
+}
+
+private struct WantsActivity: ViewModifier {
+    let client: WantMCPClient
+    let refresh: @MainActor () async -> Void
+    @Environment(\.scenePhase) private var phase
+
+    func body(content: Content) -> some View {
+        content.task(id: phase) {
+            guard phase == .active else { return }
+            var cursor: String?
+            var initial = true
+            while !Task.isCancelled {
+                do {
+                    let page = try await client.poll("list.activity", cursor: cursor)
+                    try Task.checkCancellation()
+                    if initial || page.hasActivity { await refresh() }
+                    initial = false
+                    let advanced = page.cursor != cursor
+                    cursor = page.cursor
+                    let delay = page.hasMore && advanced ? 0 : min(300, max(2, page.nextPoll ?? 30))
+                    try await Task.sleep(for: .seconds(delay))
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    await refresh()
+                    try? await Task.sleep(for: .seconds(30))
                 }
             }
         }
