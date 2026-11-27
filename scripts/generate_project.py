@@ -97,7 +97,7 @@ for name in products:
                          'LD_RUNPATH_SEARCH_PATHS':'"$(inherited) @executable_path/Frameworks @loader_path/Frameworks"', 'SUPPORTS_MACCATALYST':'NO'})
         del settings['CODE_SIGN_IDENTITY']
     if name == 'msgblastMobile':
-        settings.update({'PRODUCT_BUNDLE_IDENTIFIER':'com.msgblast.ios', 'PRODUCT_NAME':'msgblastMobile', 'INFOPLIST_FILE':'msgblastMobile/Info.plist', 'MARKETING_VERSION':'0.1.0', 'CURRENT_PROJECT_VERSION':'1',
+        settings.update({'PRODUCT_BUNDLE_IDENTIFIER':'com.msgblast.ios', 'PRODUCT_NAME':'msgblast', 'WRAPPER_NAME':'msgblastMobile.app', 'EXECUTABLE_NAME':'msgblastMobile', 'INFOPLIST_FILE':'msgblastMobile/Info.plist', 'MARKETING_VERSION':'0.1.0', 'CURRENT_PROJECT_VERSION':'1',
                          'INFOPLIST_KEY_CFBundleDisplayName':'msgblast', 'INFOPLIST_KEY_UILaunchScreen_Generation':'YES', 'INFOPLIST_KEY_UIApplicationSceneManifest_Generation':'YES',
                          'INFOPLIST_KEY_UISupportedInterfaceOrientations':'"UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"',
                          'INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad':'"UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"',

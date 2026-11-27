@@ -60,6 +60,8 @@ import msgblastRemoteProtocol
     private var canSave = true
     private var credential: WantCredential?
     private var service: WantService!
+    private var accessMonitor: Task<Void, Never>?
+    private var removedLists: Set<String> = []
     private var poller: Task<Void, Never>?
     private var latestReload = UUID()
     private var reloadPending = false
@@ -69,6 +71,7 @@ import msgblastRemoteProtocol
     private var callback: WantOAuthCallback?
     private var authorization: Task<Void, Never>?
     private var refreshing: Task<String, Error>?
+    private var rotation = WantTokenRotation()
     private lazy var sends = AgentControlSends(model: app, source: .wants)
     private let keychain: WantKeychain
     private var forwardingGrant: String { saved.grantID?.uuidString ?? "unbound" }
@@ -89,6 +92,7 @@ import msgblastRemoteProtocol
             service = WantFixture(activityDelay: 60)
         } else {
             credential = keychain.read()
+            removedLists = credential?.removedLists ?? []
             signedIn = credential != nil
             if var existing = credential, existing.grantID == nil {
                 existing.grantID = UUID()
@@ -105,6 +109,10 @@ import msgblastRemoteProtocol
 
     func start() {
         guard signedIn, poller == nil else { return }
+        if keychain.endpoint == WantOAuth.resource, let client = service as? WantMCPClient {
+            let generation = session
+            accessMonitor = Task { await followAccess(client, generation: generation) }
+        }
         poller = Task { [weak self] in
             await self?.reload()
             while !Task.isCancelled, let self {
@@ -119,17 +127,28 @@ import msgblastRemoteProtocol
         let reloadID = UUID()
         latestReload = reloadID
         let session = self.session
+        func checkReload() throws {
+            guard latestReload == reloadID, self.session == session else { throw CancellationError() }
+        }
         do {
             var loaded: [WantList] = [], loadedComments: [String: [WantComment]] = [:], loadedSuggestions: [String: [WantEntry]] = [:]
             var loadedEntries: [String: [WantEntry]] = [:]
-            for id in try await service.writableListIDs() { loaded.append(try await service.list(id)) }
+            for id in try await service.writableListIDs() where !removedLists.contains(id) {
+                try checkReload()
+                loaded.append(try await service.list(id))
+            }
             for list in loaded {
+                try checkReload()
                 loadedComments[list.id] = try await service.comments(listID: list.id)
+                try checkReload()
                 loadedSuggestions[list.id] = try await service.suggestions(listID: list.id)
             }
             let visible = Set(loaded.flatMap { ($0.items ?? []).map(\.id) })
-            for id in entries.keys where visible.contains(id) { loadedEntries[id] = try await service.entries(itemID: id) }
-            guard session == self.session, latestReload == reloadID else { return false }
+            for id in entries.keys where visible.contains(id) {
+                try checkReload()
+                loadedEntries[id] = try await service.entries(itemID: id)
+            }
+            try checkReload()
             lists = loaded
             comments = loadedComments
             suggestions = loadedSuggestions
@@ -187,7 +206,7 @@ import msgblastRemoteProtocol
         signingIn = false
     }
 
-    var claim: WantClaim? { credential?.claim }
+    var claim: WantClaim? { credential?.claim.flatMap { removedLists.contains($0.listID) ? nil : $0 } }
 
     func startList(title: String, format: WantFormat) async throws -> WantCredential {
         guard canSave else { throw WantError.server("Wants settings could not be read. The existing file has been preserved.") }
@@ -208,7 +227,7 @@ import msgblastRemoteProtocol
     }
 
     func keepList(_ claim: WantClaim) {
-        guard credential?.claim == claim, claim.active else { return }
+        guard self.claim == claim, claim.active else { return }
         if app.demo { credential?.claim = nil; objectWillChange.send() }
         else { NSWorkspace.shared.open(claim.url) }
     }
@@ -221,8 +240,9 @@ import msgblastRemoteProtocol
     }
 
     func signOut() {
-        poller?.cancel(); poller = nil; session += 1
-        refreshing?.cancel(); refreshing = nil
+        accessMonitor?.cancel(); accessMonitor = nil; removedLists.removeAll()
+        poller?.cancel(); poller = nil; session += 1; latestReload = UUID()
+        refreshing?.cancel(); refreshing = nil; rotation.received = nil
         if !app.demo, !keychain.delete() { error = "Signed out on this Mac. The Keychain could not remove the saved key." }
         credential = nil; reloadPending = false; answering = []
         signedIn = false; lists = []; comments = [:]; suggestions = [:]; entries = [:]
@@ -248,34 +268,51 @@ import msgblastRemoteProtocol
     private func connectService() {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
         let generation = session
-        service = WantMCPClient(endpoint: keychain.endpoint, version: version) { [weak self] in
+        service = WantMCPClient(endpoint: keychain.endpoint, version: version, renew: { [weak self] refused in
+            guard let self else { throw CancellationError() }
+            return try await self.token(for: generation, refused: refused)
+        }) { [weak self] in
             guard let self else { throw CancellationError() }
             return try await self.token(for: generation)
         }
     }
 
     /// The bearer token, refreshed first when an OAuth token is about to expire.
-    private func token(for generation: Int) async throws -> String {
-        guard generation == session, let credential else { throw CancellationError() }
-        guard let expiry = credential.expiresAt, expiry < Date().addingTimeInterval(60), credential.refreshToken != nil else { return credential.accessToken }
-        if let refreshing {
-            let token = try await refreshing.value
-            guard generation == session else { throw CancellationError() }
-            return token
+    private func token(for generation: Int, refused: String? = nil) async throws -> String {
+        let credential = try currentCredential(for: generation)
+        if let refused {
+            guard refused == credential.accessToken else { return credential.accessToken }
+            guard credential.refreshToken != nil else { throw WantError.unauthorized(resourceMetadata: nil) }
+        } else if credential.refreshToken == nil || (credential.expiresAt ?? .distantFuture) >= Date().addingTimeInterval(60) {
+            return credential.accessToken
         }
-        let task = Task {
-            defer { if session == generation { refreshing = nil } }
-            var next = try await WantOAuth.refresh(credential, resource: keychain.endpoint)
-            guard session == generation else { throw CancellationError() }
-            next.grantID = credential.grantID
-            self.credential = next
-            guard keychain.save(next) else { throw WantError.server("msgblast could not save your refreshed sign-in to the Keychain.") }
-            return next.accessToken
-        }
-        refreshing = task
+        let task = refreshing ?? refresh(credential, generation: generation)
         let token = try await task.value
         guard generation == session else { throw CancellationError() }
         return token
+    }
+
+    private func currentCredential(for generation: Int) throws -> WantCredential {
+        guard generation == session, let credential else { throw CancellationError() }
+        if let next = try rotation.persist(replacing: credential, using: { [keychain] next in
+            guard keychain.save(next) else { throw WantError.server("msgblast could not save your refreshed sign-in to the Keychain.") }
+        }) {
+            self.credential = next
+            return next
+        }
+        return credential
+    }
+
+    private func refresh(_ credential: WantCredential, generation: Int) -> Task<String, Error> {
+        let task = Task {
+            defer { if session == generation { refreshing = nil } }
+            let next = try await WantOAuth.refresh(credential, resource: keychain.endpoint)
+            guard session == generation else { throw CancellationError() }
+            rotation.received = next
+            return try currentCredential(for: generation).accessToken
+        }
+        refreshing = task
+        return task
     }
 
     /// Loads an item's entries when it is opened, and again when the event feed reports changes.
@@ -284,7 +321,7 @@ import msgblastRemoteProtocol
         let session = self.session
         do {
             let loaded = try await service.entries(itemID: item.id)
-            if session == self.session { entries[item.id] = loaded }
+            if session == self.session, lists.contains(where: { $0.items?.contains(where: { $0.id == item.id }) == true }) { entries[item.id] = loaded }
         } catch { if session == self.session { fail(error) } }
     }
 
@@ -292,7 +329,7 @@ import msgblastRemoteProtocol
 
     func addItem(_ text: String, to list: WantList) async -> Bool {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, signedIn, let service else { return false }
+        guard !text.isEmpty, signedIn, !removedLists.contains(list.id), let service else { return false }
         let generation = session
         do { _ = try await service.addItem(listID: list.id, text: text) }
         catch {
@@ -311,7 +348,7 @@ import msgblastRemoteProtocol
 
     @discardableResult func answer(_ question: WantQuestion, with text: String) async -> Bool {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard signedIn, !text.isEmpty, answering.insert(question.id).inserted else { return false }
+        guard signedIn, !text.isEmpty, lists.contains(where: { $0.items?.contains(where: { $0.openQuestion?.id == question.id }) == true }), answering.insert(question.id).inserted else { return false }
         let generation = session
         defer { if generation == session { answering.remove(question.id) } }
         do {
@@ -327,14 +364,16 @@ import msgblastRemoteProtocol
 
     /// Sends the item to the chosen agents in a new conversation and remembers it for the item.
     func blast(_ item: WantItem, in list: WantList, to agentIDs: [String]) async {
-        guard signedIn, !sending else { return }
+        guard signedIn, !removedLists.contains(list.id), !sending else { return }
         sendsInFlight += 1
         defer { sendsInFlight -= 1 }
         let generation = session
         if entries[item.id] == nil { await loadEntries(item) }
-        guard generation == session, let posted = entries[item.id] else { return }
+        guard generation == session, !removedLists.contains(list.id), let posted = entries[item.id] else { return }
         let prompt = WantPrompt.ask(item: item, list: list, posted: posted)
-        guard let result = await send(.createConversation(text: prompt, agentIDs: agentIDs.compactMap(AgentControlSend.remoteID), attachmentIDs: [])), generation == session else { return }
+        let action = RemoteAction.createConversation(text: prompt, agentIDs: agentIDs.compactMap(AgentControlSend.remoteID), attachmentIDs: [])
+        let authorized: @MainActor () -> Bool = { !self.removedLists.contains(list.id) }
+        guard let result = await send(action, isAuthorized: authorized), generation == session, authorized() else { return }
         update { $0.blasts[item.id] = .init(comparisonID: result.conversationID, agents: agentIDs) }
     }
 
@@ -360,6 +399,39 @@ import msgblastRemoteProtocol
     }
 
     // MARK: Events
+
+    private func followAccess(_ client: WantMCPClient, generation: Int) async {
+        while !Task.isCancelled, session == generation {
+            let cursor = credential?.accessCursor ?? 0
+            var delay: TimeInterval = 60
+            do {
+                let page = try await client.accessEvents(after: cursor)
+                guard !Task.isCancelled, session == generation else { return }
+                guard var next = credential else { return }
+                next.apply(page)
+                for id in next.removedLists ?? [] { removeAccess(to: id) }
+                if next != credential {
+                    guard keychain.save(next) else { throw WantError.server("The list connection could not be saved.") }
+                    credential = next
+                    objectWillChange.send()
+                }
+                if page.next > cursor { delay = 0 }
+            } catch WantError.unavailable(let seconds) { delay = max(seconds, delay) }
+            catch { if session == generation { fail(error) } }
+            try? await Task.sleep(for: .seconds(delay))
+        }
+    }
+
+    private func removeAccess(to id: String) {
+        guard removedLists.insert(id).inserted else { return }
+        latestReload = UUID()
+        reloadPending = true
+        forwardingRevision += 1
+        for item in lists.first(where: { $0.id == id })?.items ?? [] { entries[item.id] = nil }
+        lists.removeAll { $0.id == id }
+        comments[id] = nil
+        suggestions[id] = nil
+    }
 
     /// One round of `events/poll`. Returns the seconds until the next round.
     private func poll() async -> TimeInterval {

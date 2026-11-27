@@ -16,13 +16,14 @@ struct MobileWantsView: View {
     @State private var error: String?
 
     private func client(_ connection: MobileWantConnection) -> WantMCPClient {
-        WantMCPClient(endpoint: WantOAuth.resource) { try await connection.token() }
+        WantMCPClient(endpoint: WantOAuth.resource, renew: { try await connection.renew($0) }) { try await connection.token() }
     }
 
     var body: some View {
         Group {
             if let connection, !replacingKey {
-                WantsLists(client: client(connection), claim: connection.grant.claim) {
+                WantsLists(client: client(connection), connection: connection) {
+                    if connection.grant.clientID != nil { disconnect(); return }
                     replacingKey = true
                     editingKey = true
                     keyRejected = true
@@ -82,8 +83,7 @@ struct MobileWantsView: View {
             StartWantListSheet { title, format in
                 try await WantClaim.start(title: title, format: format)
             } save: { grant in
-                try WantsKeychain.save(grant)
-                connection = MobileWantConnection(grant)
+                connection = try MobileWantConnection.install(grant)
             }
         }
         .navigationTitle("Wants")
@@ -125,8 +125,7 @@ struct MobileWantsView: View {
             guard parts?.url == redirect, issuer?.count == 1, issuer?.first?.value == server.issuer else { throw WantError.invalidResponse }
             let grant = try await WantOAuth.exchange(callback: back, server: server, clientID: clientID, redirect: redirect, pkce: pkce, resource: resource)
             try Task.checkCancellation()
-            try WantsKeychain.save(grant)
-            connection = MobileWantConnection(grant)
+            connection = try MobileWantConnection.install(grant)
         } catch is CancellationError {
         } catch ASWebAuthenticationSessionError.canceledLogin {
         } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
@@ -148,11 +147,11 @@ struct MobileWantsView: View {
         connecting = true
         defer { connecting = false }
         do {
-            _ = try await client(MobileWantConnection(credential)).writableListIDs()
-            try WantsKeychain.save(credential)
+            let candidate = WantMCPClient(endpoint: WantOAuth.resource) { credential.accessToken }
+            _ = try await candidate.writableListIDs()
+            connection = try MobileWantConnection.install(credential)
             draft = ""
             keyRejected = false
-            connection = MobileWantConnection(credential)
             replacingKey = false
         } catch WantError.unauthorized {
             keyRejected = true
@@ -179,7 +178,8 @@ private struct WantsBrowserLink<Label: View>: View {
 
 private struct WantsLists: View {
     let client: WantMCPClient
-    let claim: WantClaim?
+    @ObservedObject var connection: MobileWantConnection
+    @Environment(\.scenePhase) private var phase
     let replaceKey: () -> Void
     @State private var keyRejected = false
     @State private var lists: [WantList]?
@@ -188,21 +188,25 @@ private struct WantsLists: View {
 
     var body: some View {
         List {
-            if let claim, claim.active, !keyRejected {
+            if let claim = connection.grant.claim, claim.active, !connection.removed.contains(claim.listID), !keyRejected, !connection.revoked {
                 Section {
                     WantsBrowserLink(destination: claim.url) { Text("Keep this list") }
                 } footer: {
                     Text("Keep your private list before \(claim.expiresAt.formatted()) or it will expire.")
                 }
             }
-            if keyRejected {
+            if keyRejected || connection.revoked {
                 Section {
-                    Text("This list key no longer has access.")
-                    Button("Replace list key", action: replaceKey)
+                    Text("This connection no longer has access.")
+                    Button(connection.grant.clientID == nil ? "Replace list key" : "Reconnect", action: replaceKey)
                 }
             } else if let error { Text(error).foregroundStyle(.secondary) }
-            if let lists {
-                if lists.isEmpty {
+            if let lists, !connection.revoked {
+                let available = lists.filter { !connection.removed.contains($0.id) }
+                if available.isEmpty && !connection.removed.isEmpty {
+                    ContentUnavailableView("Access removed", systemImage: "lock", description: Text("Connect another list to continue."))
+                    Button(connection.grant.clientID == nil ? "Replace list key" : "Reconnect", action: replaceKey)
+                } else if available.isEmpty {
                     ContentUnavailableView {
                         Label("No writable lists", systemImage: "checklist")
                     } description: {
@@ -211,13 +215,14 @@ private struct WantsLists: View {
                         WantsBrowserLink(destination: URL(string: "https://wantmcp.com/app")!) { Text("Open my lists on Wants") }
                     }
                 }
-                ForEach(lists) { list in
-                    NavigationLink { WantsListDetail(client: client, list: list) } label: {
+                ForEach(available) { list in
+                    NavigationLink { WantsAccessView(listID: list.id, client: client, connection: connection) { WantsListDetail(connection: connection, client: client, list: list) } } label: {
                         Label(list.title, systemImage: list.isPrivate ? "lock" : "list.bullet")
                     }
                 }
-            } else if error == nil && !keyRejected { ProgressView("Loading lists") }
+            } else if error == nil && !keyRejected && !connection.revoked { ProgressView("Loading lists") }
         }
+        .task(id: phase) { if phase == .active { await connection.followAccess(client: client) } }
         .task { await refresh() }
         .refreshable { await refresh() }
     }
@@ -227,7 +232,7 @@ private struct WantsLists: View {
         let request = refreshID
         do {
             var result: [WantList] = []
-            for id in try await client.writableListIDs() { result.append(try await client.list(id)) }
+            for id in try await client.writableListIDs() where !connection.removed.contains(id) { result.append(try await client.list(id)) }
             try Task.checkCancellation()
             guard request == refreshID else { return }
             lists = result
@@ -239,6 +244,20 @@ private struct WantsLists: View {
             error = nil
             keyRejected = true
         } catch { if request == refreshID && !Task.isCancelled { self.error = error.localizedDescription } }
+    }
+}
+
+private struct WantsAccessView<Content: View>: View {
+    let listID: String
+    let client: WantMCPClient
+    @Environment(\.scenePhase) private var phase
+    @ObservedObject var connection: MobileWantConnection
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        if connection.revoked || connection.removed.contains(listID) {
+            ContentUnavailableView("Access removed", systemImage: "lock", description: Text("msgblast no longer has access to this list."))
+        } else { content().task(id: phase) { if phase == .active { await connection.followAccess(client: client) } } }
     }
 }
 
@@ -333,6 +352,7 @@ private struct WantsGalleryPhoto: View {
 }
 
 private struct WantsListDetail: View {
+    @ObservedObject var connection: MobileWantConnection
     let client: WantMCPClient
     @State var list: WantList
     @State private var refreshID = 0
@@ -440,7 +460,9 @@ private struct WantsListDetail: View {
 
     private func itemLink(_ item: WantItem) -> some View {
         NavigationLink {
-            WantsItemDetail(client: client, listID: list.id, itemURL: WantJSON.webURL(list.url(for: item)), item: item, format: list.kind)
+            WantsAccessView(listID: list.id, client: client, connection: connection) {
+                WantsItemDetail(client: client, listID: list.id, itemURL: WantJSON.webURL(list.url(for: item)), item: item, format: list.kind)
+            }
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 if look.template == .gallery && list.kind == .shopping {
