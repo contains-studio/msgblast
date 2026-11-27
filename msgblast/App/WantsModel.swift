@@ -126,25 +126,28 @@ import msgblastRemoteProtocol
         let reloadID = UUID()
         latestReload = reloadID
         let session = self.session
+        func checkReload() throws {
+            guard latestReload == reloadID, self.session == session else { throw CancellationError() }
+        }
         do {
             var loaded: [WantList] = [], loadedComments: [String: [WantComment]] = [:], loadedSuggestions: [String: [WantEntry]] = [:]
             var loadedEntries: [String: [WantEntry]] = [:]
             for id in try await service.writableListIDs() where !removedLists.contains(id) {
-                guard latestReload == reloadID else { return false }
+                try checkReload()
                 loaded.append(try await service.list(id))
             }
             for list in loaded {
-                guard latestReload == reloadID else { return false }
+                try checkReload()
                 loadedComments[list.id] = try await service.comments(listID: list.id)
-                guard latestReload == reloadID else { return false }
+                try checkReload()
                 loadedSuggestions[list.id] = try await service.suggestions(listID: list.id)
             }
             let visible = Set(loaded.flatMap { ($0.items ?? []).map(\.id) })
             for id in entries.keys where visible.contains(id) {
-                guard latestReload == reloadID else { return false }
+                try checkReload()
                 loadedEntries[id] = try await service.entries(itemID: id)
             }
-            guard session == self.session, latestReload == reloadID else { return false }
+            try checkReload()
             lists = loaded
             comments = loadedComments
             suggestions = loadedSuggestions
@@ -278,11 +281,13 @@ import msgblastRemoteProtocol
         } else if credential.refreshToken == nil || (credential.expiresAt ?? .distantFuture) >= Date().addingTimeInterval(60) {
             return credential.accessToken
         }
-        if let refreshing {
-            let token = try await refreshing.value
-            guard generation == session else { throw CancellationError() }
-            return token
-        }
+        let task = refreshing ?? refresh(credential, generation: generation)
+        let token = try await task.value
+        guard generation == session else { throw CancellationError() }
+        return token
+    }
+
+    private func refresh(_ credential: WantCredential, generation: Int) -> Task<String, Error> {
         let task = Task {
             defer { if session == generation { refreshing = nil } }
             var next = try await WantOAuth.refresh(credential, resource: keychain.endpoint)
@@ -295,9 +300,7 @@ import msgblastRemoteProtocol
             return next.accessToken
         }
         refreshing = task
-        let token = try await task.value
-        guard generation == session else { throw CancellationError() }
-        return token
+        return task
     }
 
     /// Loads an item's entries when it is opened, and again when the event feed reports changes.
