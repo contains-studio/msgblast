@@ -62,7 +62,7 @@ struct MobileWantsView: View {
                         Button {
                             showingWantsSite = true
                         } label: {
-                            Text("Create or connect a list").frame(maxWidth: .infinity)
+                            Text("Set up The Want MCP").frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent).controlSize(.large).padding(.top, 12)
                         Button("I already have a list key") { showingKeyForm = true }

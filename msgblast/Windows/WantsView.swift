@@ -83,10 +83,10 @@ private struct WantsSignInView: View {
                 .frame(maxWidth: 360)
                 .padding(.bottom, 6)
             if wants.signingIn {
-                HStack { ProgressView().controlSize(.small); Text("Finish signing in in your browser.") }
+                HStack { ProgressView().controlSize(.small); Text("Finish setting up The Want MCP in your browser.") }
                 Button("Cancel") { wants.cancelSignIn() }
             } else {
-                Button("Sign in to Wants") { Task { await wants.signIn() } }.buttonStyle(.borderedProminent).controlSize(.large)
+                Button("Set up The Want MCP") { Task { await wants.signIn() } }.buttonStyle(.borderedProminent).controlSize(.large)
                 if showingKey {
                     HStack {
                         SecureField("wk_…", text: $key).textFieldStyle(.roundedBorder).frame(width: 260)
