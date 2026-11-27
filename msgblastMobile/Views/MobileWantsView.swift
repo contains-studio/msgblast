@@ -164,25 +164,27 @@ private extension WantFormat {
 private struct WantsLook {
     enum Template: String { case sheet, today, doc, board, sections, heat, tracker, gallery }
     let template: Template
-    let occasion: (name: String, icon: String, color: Color)?
+    typealias Occasion = (name: String, icon: String, color: Color)
+    let occasion: Occasion?
+    private static let occasions: [String: Occasion] = [
+        "birthday": ("Birthday", "birthday.cake", .pink),
+        "black-friday": ("Black Friday", "tag", .purple),
+        "cyber-monday": ("Cyber Monday", "bolt", .blue),
+        "chanukah": ("Chanukah", "flame", .blue),
+        "christmas": ("Christmas", "tree", .green),
+        "kwanzaa": ("Kwanzaa", "flame", .orange),
+        "new-year": ("New Year", "sparkles", .purple),
+        "valentines": ("Valentine’s Day", "heart", .pink),
+        "halloween": ("Halloween", "moon.stars", .orange),
+    ]
 
     init(list: WantList) {
         let parts = (list.theme ?? "").lowercased().components(separatedBy: "--")
         let slug = parts[0]
         let fallback: Template = switch list.kind { case .shopping: .sheet; case .tasks: .today; case .research: .doc }
         template = slug == "checklist" ? .today : Template(rawValue: slug) ?? fallback
-        occasion = switch parts.count > 1 ? parts[1] : slug {
-        case "birthday": ("Birthday", "birthday.cake", .pink)
-        case "black-friday": ("Black Friday", "tag", .purple)
-        case "cyber-monday": ("Cyber Monday", "bolt", .blue)
-        case "chanukah", "hanukkah": ("Chanukah", "flame", .blue)
-        case "christmas": ("Christmas", "tree", .green)
-        case "kwanzaa": ("Kwanzaa", "flame", .orange)
-        case "new-year": ("New Year", "sparkles", .purple)
-        case "valentines": ("Valentine’s Day", "heart", .pink)
-        case "halloween": ("Halloween", "moon.stars", .orange)
-        default: nil
-        }
+        let occasionSlug = parts.count > 1 ? parts[1] : slug
+        occasion = Self.occasions[occasionSlug == "hanukkah" ? "chanukah" : occasionSlug]
     }
 }
 
