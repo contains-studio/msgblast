@@ -192,6 +192,56 @@ final class WantsTests: XCTestCase {
         XCTAssertNil(list.items?.first?.entries)
     }
 
+    func testCommentsIncludeLaterPagesAndRejectRepeatedCursor() async throws {
+        var repeatCursor = false
+        WantStub.handler = { request in
+            let body = try! JSONSerialization.jsonObject(with: WantStub.body(request)) as! [String: Any]
+            let params = body["params"] as? [String: Any]
+            let args = params?["arguments"] as? [String: String]
+            XCTAssertEqual(args?["list"], "lst_1")
+            let id = args?["cursor"] ?? "first"
+            let note: [String: Any] = ["id": id, "list_id": "lst_1", "target_type": "entry",
+                "target_id": "ent_1", "url": "https://example.org", "body": id,
+                "author": ["kind": "user", "handle": "sample"], "created_at": "2026-11-20T10:00:00Z"]
+            var page: [String: Any] = ["comments": [note]]
+            if id == "first" || repeatCursor { page["next_cursor"] = "second" }
+            return self.reply(["structuredContent": page], to: request)
+        }
+        let notes = try await client().comments(listID: "lst_1")
+        XCTAssertEqual(notes.map(\.id), ["first", "second"])
+        repeatCursor = true
+        do {
+            _ = try await client().comments(listID: "lst_1")
+            XCTFail("A repeated cursor should fail the refresh")
+        } catch WantError.invalidResponse {}
+    }
+
+    func testFullResearchListKeepsAcceptedAnswerBodyAndSources() async throws {
+        var json = listJSON
+        json["format"] = "research"
+        var item = try XCTUnwrap((json["items"] as? [[String: Any]])?.first)
+        var answer = try XCTUnwrap((item["entries"] as? [[String: Any]])?.first)
+        let links = ["https://example.org/study", "https://example.com/data"]
+        answer["product_url"] = NSNull()
+        answer["description"] = "The trials used different sample sizes."
+        answer["links"] = links
+        item["entries"] = [answer]
+        item["completion"] = ["entry_id": "ent_1"]
+        json["items"] = [item]
+        WantStub.handler = { request in
+            let body = try! JSONSerialization.jsonObject(with: WantStub.body(request)) as! [String: Any]
+            let params = body["params"] as? [String: Any]
+            XCTAssertEqual(params?["arguments"] as? [String: String], ["list": "lst_1", "detail": "full"])
+            return self.reply(["structuredContent": json], to: request)
+        }
+        let list = try await client().list("lst_1", full: true)
+        let question = try XCTUnwrap(list.items?.first)
+        XCTAssertTrue(question.isFinished)
+        let accepted = try XCTUnwrap(question.entries?.first { $0.id == question.completion?.entryId })
+        XCTAssertEqual(accepted.description, "The trials used different sample sizes.")
+        XCTAssertEqual(accepted.links, links)
+    }
+
     func testPricesCarryProvenance() throws {
         let price = try WantJSON.decoder.decode(WantPrice.self, from: JSONSerialization.data(withJSONObject: [
             "price": "59.00", "currency": "GBP", "original_price": NSNull(), "posted_by": ["kind": "user", "handle": "x"], "posted_at": "2026-11-26T09:00:00Z",

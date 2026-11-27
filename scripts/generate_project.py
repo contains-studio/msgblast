@@ -53,6 +53,8 @@ for name in products:
     prefixes = {'msgblastCore': 'msgblast/Core/', 'msgblastRemoteProtocol': 'msgblast/RemoteProtocol/', 'msgblastTests': 'msgblastTests/', 'msgblastUITests': 'msgblastUITests/', 'msgblastRemoteProtocolTests': 'msgblastRemoteProtocolTests/', 'msgblastMobileKit': 'msgblastMobile/Kit/', 'msgblastMobileTests': 'msgblastMobileTests/'}
     if name == 'msgblastMobile': own = [p for p in files if p.startswith('msgblastMobile/') and not p.startswith('msgblastMobile/Kit/')]
     else: own = [p for p in files if (p.startswith(prefixes[name]) if name in prefixes else p.startswith('msgblast/') and not p.startswith('msgblast/Core/') and not p.startswith('msgblast/RemoteProtocol/'))]
+    if name == 'msgblastMobileKit':
+        own.extend('msgblast/Core/' + file for file in ['Wants.swift', 'WantMCPClient.swift', 'WantOAuth.swift'])
     if name == 'msgblastTests': own.append('msgblast/Permissions/MessagesAccessGuide.swift')
     builds = [obj(name+p+'build', '{isa = PBXBuildFile; fileRef = '+files[p]+';}') for p in own]
     sources = obj(name+'sources', '{isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = '+seq(builds)+'; runOnlyForDeploymentPostprocessing = 0;}')

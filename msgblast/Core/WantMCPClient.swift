@@ -59,10 +59,17 @@ public struct WantMCPClient: WantService {
         return (identity.writableLists ?? []).map(\.id)
     }
     public func list(_ id: String) async throws -> WantList {
+        try await list(id, full: false)
+    }
+
+    public func list(_ id: String, full: Bool) async throws -> WantList {
         var list: WantList?, cursor: String?
         var seen: Set<String> = []
         repeat {
-            let content = try await tool("get_list", cursor.map { ["list": id, "cursor": $0] } ?? ["list": id]) as? [String: Any] ?? [:]
+            var arguments = ["list": id]
+            arguments["cursor"] = cursor
+            if full { arguments["detail"] = "full" }
+            let content = try await tool("get_list", arguments) as? [String: Any] ?? [:]
             // The compact read may nest the list's own fields under `list`.
             let fields = (content["list"] as? [String: Any] ?? [:]).merging(content) { _, page in page }
             let page = try decode(WantList.self, fields)
@@ -74,21 +81,28 @@ public struct WantMCPClient: WantService {
         return list
     }
     public func entries(itemID: String) async throws -> [WantEntry] {
-        var entries: [WantEntry] = [], cursor: String?
+        try await pagedRows("get_item_entries", arguments: ["item_id": itemID], key: "entries")
+    }
+
+    private func pagedRows<Row: Decodable>(_ name: String, arguments: [String: String], key: String) async throws -> [Row] {
+        var rows: [Row] = [], cursor: String?
         var seen: Set<String> = []
         repeat {
-            let content = try await tool("get_item_entries", cursor.map { ["item_id": itemID, "cursor": $0] } ?? ["item_id": itemID])
-            entries += try decode([WantEntry].self, content, key: "entries")
+            try Task.checkCancellation()
+            var page = arguments
+            page["cursor"] = cursor
+            let content = try await tool(name, page)
+            rows += try decode([Row].self, content, key: key)
             cursor = (content as? [String: Any])?["next_cursor"] as? String
             if let cursor, !seen.insert(cursor).inserted { throw WantError.invalidResponse }
         } while cursor != nil
-        return entries
+        return rows
     }
     public func answer(questionID: String, text: String) async throws {
         _ = try await tool("answer_question", ["question_id": questionID, "answer": text])
     }
     public func comments(listID: String) async throws -> [WantComment] {
-        try decode([WantComment].self, try await tool("get_comments", ["list": listID]), key: "comments")
+        try await pagedRows("get_comments", arguments: ["list": listID], key: "comments")
     }
     public func suggestions(listID: String) async throws -> [WantEntry] {
         struct Row: Decodable { var entry: WantEntry }

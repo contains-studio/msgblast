@@ -38,7 +38,7 @@ public enum WantActor: Codable, Hashable, Sendable {
 public struct WantPrice: Codable, Hashable, Sendable {
     public var price: String, currency: String, originalPrice: String?, postedBy: WantActor, postedAt: Date
     /// Provenance: only a price read on the retailer's own page is verified. Older servers left these out.
-    public var verified: Bool?, checkedAt: Date?
+    public var verified: Bool?, checkedAt: Date?, source: String?
     public var isVerified: Bool { verified == true }
     public var formatted: String { Self.format(price, currency: currency) }
     public var formattedOriginal: String? { originalPrice.flatMap { $0 == price ? nil : Self.format($0, currency: currency) } }
@@ -55,6 +55,7 @@ public struct WantEntry: Codable, Hashable, Identifiable, Sendable {
     public var id: String, itemId: String, listId: String, url: String, status: String
     /// `product_url` is null on task and research lists, whose entries carry `links` instead.
     public var author: WantActor, title: String, productUrl: String?, imageUrl: String?, retailer: String
+    public var description: String?
     public var links: [String]?
     public var currentPrice: WantPrice?, createdAt: Date
     public var link: String? { productUrl ?? links?.first }
@@ -68,6 +69,14 @@ public struct WantItem: Codable, Hashable, Identifiable, Sendable {
     public var entryCounts: Counts, commentCount: Int
     /// `open`, `in_progress`, `waiting_on_owner` or `done` on servers with list formats. The compact
     /// `get_list` sends `details_preview` instead of `details`.
+    public struct Finish: Codable, Hashable, Sendable { public var entryId: String? }
+    public struct BestPrice: Codable, Hashable, Sendable {
+        public var entryId: String, price: String, currency: String
+        public var formatted: String { WantPrice.format(price, currency: currency) }
+    }
+    public var bestPrice: BestPrice?, dueAt: Date?, statusNote: String?
+    public var purchase: Finish?, completion: Finish?
+    public var isFinished: Bool { status == "done" || purchase != nil || completion != nil }
     public var details: String?, detailsPreview: String?, status: String?, claimedBy: WantActor?
     /// An agent's question to the person; the item waits on them until it is answered.
     public var openQuestion: WantQuestion?
@@ -84,7 +93,7 @@ public struct WantList: Codable, Hashable, Identifiable, Sendable {
     public var id: String, url: String, title: String, ownerHandle: String, itemCount: Int
     public var items: [WantItem]?
     /// `shopping`, `tasks` or `research`, and `public` or `private`. Older servers left them out.
-    public var format: String?, visibility: String?
+    public var format: String?, visibility: String?, theme: String?
     /// The server's instructions for agents working this list's format.
     public var howToWork: String?
     public var kind: WantFormat { format.flatMap(WantFormat.init(rawValue:)) ?? .shopping }
