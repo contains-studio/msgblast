@@ -473,8 +473,7 @@ private struct WantsItemDetail: View {
             if let error { Text(error).foregroundStyle(.secondary) }
         }
         .navigationBarTitleDisplayMode(.inline)
-        .task { await refresh() }
-        .wantsActivity(client: client, refresh: refresh)
+        .wantsActivity(client: client, loadOnOpen: true, refresh: refresh)
         .refreshable { await refresh() }
     }
 
@@ -483,8 +482,8 @@ private struct WantsItemDetail: View {
         return VStack(alignment: .leading, spacing: Space.gap) {
             if format == .shopping {
                 if listed, let url = WantJSON.webURL(entry.productUrl) {
-                    WantsBrowserLink(destination: url) { entryLabel(entry) }.buttonStyle(.plain)
-                } else { entryLabel(entry) }
+                    WantsBrowserLink(destination: url) { entryLabel(entry, linked: true) }.buttonStyle(.plain)
+                } else { entryLabel(entry, linked: false) }
             } else {
                 writtenEntry(entry)
             }
@@ -529,12 +528,12 @@ private struct WantsItemDetail: View {
         }
     }
 
-    private func entryLabel(_ entry: WantEntry) -> some View {
+    private func entryLabel(_ entry: WantEntry, linked: Bool) -> some View {
         HStack(alignment: .top, spacing: Space.inset) {
-            offerThumbnail(entry.imageUrl)
+            offerThumbnail(entry.status == "listed" ? entry.imageUrl : nil)
             VStack(alignment: .leading, spacing: Space.tight) {
                 Text(entry.title).font(.headline)
-                    .foregroundStyle(WantJSON.webURL(entry.productUrl) == nil ? Color.primary : Color.accentColor)
+                    .foregroundStyle(linked ? Color.accentColor : Color.primary)
                 if let price = entry.currentPrice {
                     Text([price.formatted, entry.retailer].filter { !$0.isEmpty }.joined(separator: " · "))
                         .font(.subheadline)
@@ -652,19 +651,21 @@ private struct WantsSubmission: View {
 }
 
 private extension View {
-    func wantsActivity(client: WantMCPClient, refresh: @escaping @MainActor () async -> Bool) -> some View {
-        modifier(WantsActivity(client: client, refresh: refresh))
+    func wantsActivity(client: WantMCPClient, loadOnOpen: Bool = false, refresh: @escaping @MainActor () async -> Bool) -> some View {
+        modifier(WantsActivity(client: client, loadOnOpen: loadOnOpen, refresh: refresh))
     }
 }
 
 private struct WantsActivity: ViewModifier {
     let client: WantMCPClient
+    let loadOnOpen: Bool
     let refresh: @MainActor () async -> Bool
     @Environment(\.scenePhase) private var phase
 
     func body(content: Content) -> some View {
         content.task(id: phase) {
             guard phase == .active else { return }
+            if loadOnOpen { _ = await refresh() }
             var cursor: String?
             var initial = true
             while !Task.isCancelled {
