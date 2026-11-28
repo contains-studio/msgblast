@@ -1,5 +1,6 @@
 import XCTest
 @testable import msgblastCore
+import msgblastRemoteProtocol
 
 private final class ScriptedRunner: MsgblastAgentRunner {
     var events: [MsgblastAgentEvent]
@@ -125,4 +126,33 @@ final class MsgblastAgentTests: XCTestCase {
         XCTAssertEqual(loaded.messages.map(\.text), ["Hi"])
         XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent("msgblast-agent.v0.json")), bytes)
     }
+
+    func testThePhoneSeesTheAccountTheStepAndAShortFailure() async {
+        let runner = ScriptedRunner([.tool(name: "msgblast_blast_wait", finished: false, failed: false)])
+        let controller = MsgblastAgentController(store: MsgblastAgentStore(directory: directory)) { _, _ in runner }
+        XCTAssertEqual(controller.remoteChat(agentCount: nil), RemoteAgentChat(account: nil, state: .idle, messageIDs: [], messages: []))
+        await controller.choose(.codexLogin)
+        controller.send("Compare")
+        await settle(controller)
+        let chat = controller.remoteChat(agentCount: 3)
+        XCTAssertEqual(chat.account, "ChatGPT")
+        XCTAssertEqual(chat.state, .failed, "A stream that ends without finishing is a failure")
+        XCTAssertEqual(chat.line, "The agent stopped before finishing.")
+        XCTAssertEqual(chat.messages.map(\.fromPerson), [true])
+        XCTAssertEqual(chat.messageIDs, controller.conversation.messages.map(\.id))
+
+        // The saved account carries over to a controller that reads the same store.
+        let working = MsgblastAgentController(store: MsgblastAgentStore(directory: directory)) { _, _ in StalledRunner() }
+        working.send("Again")
+        XCTAssertEqual(working.remoteChat(agentCount: 3).state, .working)
+        XCTAssertEqual(MsgblastAgent.stepLine(tool: "msgblast_blast_wait", agentCount: 3), "Sent to 3 agents · waiting for replies…")
+        XCTAssertEqual(MsgblastAgent.stepLine(tool: "msgblast_blast_wait", agentCount: 1), "Sent to 1 agent · waiting for replies…")
+    }
+}
+
+/// A turn that never ends, so the controller stays working.
+private final class StalledRunner: MsgblastAgentRunner {
+    func send(_ text: String) -> AsyncStream<MsgblastAgentEvent> { AsyncStream { _ in } }
+    func interrupt() async {}
+    func close() async {}
 }

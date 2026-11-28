@@ -273,7 +273,7 @@ struct MainView: View {
                     }.padding(18).background(.bar)
                     }
                 }
-                if model.demo {
+                if model.msgblastAgentAvailable {
                     MsgblastAgentBar(model: model, agent: model.msgblastAgent, accounts: model.personalAgent, activity: model.agentSendActivity, maxHeight: detailHeight / 3)
                 }
                 StatusBanners(model: model)

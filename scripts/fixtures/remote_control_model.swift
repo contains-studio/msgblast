@@ -42,7 +42,7 @@ extension SideChatModelCheck {
         host.discardStagedAttachments()
         try await runRemoteServiceChecks(model)
         try await checkWantsForwarding()
-        print("PASS: remote commands run through the actual AppModel send paths (Messages new/private/shared with a staged file, website shared send that prepares the chat, waits for readiness and submits once, plus prepareConversation), replay without resending, keep the Mac's drafts and files, route failures to the command result instead of the alert, and refuse when locked or when iMessage sends are off; the real RemoteService pairs an in-memory phone with no network port, streams its snapshot and events, honors keep-awake and the iMessage setting, and forgets the phone. Isolated Demo profile; simulated Messages and local website fixtures only.")
+        print("PASS: remote commands run through the actual AppModel send paths (Messages new/private/shared with a staged file, website shared send that prepares the chat, waits for readiness and submits once, plus prepareConversation), replay without resending, keep the Mac's drafts and files, route failures to the command result instead of the alert, and refuse when locked or when iMessage sends are off; the real RemoteService pairs an in-memory phone with no network port, streams its snapshot and events, runs a Demo msgblast agent turn the phone asked for and streams it back, stops it, refuses it while agent sends are stopped, honors keep-awake and the iMessage setting, and forgets the phone. Isolated Demo profile; simulated Messages and local website fixtures only.")
     }
 
     @MainActor static func checkWantsForwarding() async throws {
@@ -291,6 +291,7 @@ extension SideChatModelCheck {
         service.setAllowMessagesSends(true)
         connection.send(try driver.frame(.command(RemoteCommand(action: .createConversation(text: "From the in-memory phone", agentIDs: [RemoteAgentIDs.messages(model.state.agents[2].id)], attachmentIDs: [])))))
         try await waitUntil { events.contains { if case .events(let list, _) = $0 { list.contains { if case .turnUpsert(let t) = $0.change { t.text == "From the in-memory phone" } else { false } } } else { false } } }
+        try await checkRemoteAgent(model, send: { try connection.send(driver.frame(.command(RemoteCommand(action: $0)))) }, events: { events })
         try await renderRemoteSettings(service, name: "remote-settings-connected")
         service.setKeepAwake(false)
         precondition(!service.keepAwake.held, "The Mac setting turns keep-awake off")
@@ -299,6 +300,44 @@ extension SideChatModelCheck {
         precondition(service.pairing.device == nil)
         service.setEnabled(false)
         precondition(!service.running)
+    }
+
+    /// The msgblast agent from the in-memory phone: the Mac's checks, a Demo turn streamed to the
+    /// phone, and Stop. DemoAgentRunner only; no account, CLI or real send.
+    @MainActor static func checkRemoteAgent(_ model: AppModel, send: (RemoteAction) throws -> Void, events: () -> [RemoteClientDriver.Event]) async throws {
+        func chats() -> [RemoteAgentChat] { events().compactMap { if case .agent(let chat) = $0 { chat } else { nil } } }
+        func result(after count: Int) -> RemoteCommandResult? { events().dropFirst(count).lazy.compactMap { if case .commandResult(let r) = $0, r.outcome != .accepted { r } else { nil } }.last }
+        func ask(_ action: RemoteAction) async throws -> RemoteCommandResult {
+            let count = events().count
+            try send(action)
+            try await waitUntil { result(after: count) != nil }
+            return result(after: count)!
+        }
+        precondition(chats().first?.account == nil, "The phone hears the agent, not set up yet: \(chats())")
+        let notSetUp = try await ask(.sendToAgent(text: "Summarize"))
+        precondition(notSetUp.code == .agentUnavailable, "\(notSetUp)")
+        await model.msgblastAgent.choose(.claude)
+        try await waitUntil { chats().last?.account == "Claude Code" }
+        model.agentSendActivity.stopped = true
+        let stopped = try await ask(.sendToAgent(text: "Summarize"))
+        model.agentSendActivity.stopped = false
+        precondition(stopped.code == .agentSendsStopped, "\(stopped)")
+        let asked = try await ask(.sendToAgent(text: "Summarize"))
+        precondition(asked.outcome == .applied, "\(asked)")
+        try await waitUntil { chats().last?.state == .working && chats().last?.line != nil }
+        // About ten seconds of scripted Demo events, waited for in two steps.
+        try await waitUntil { chats().last?.messageIDs.count == 2 }
+        try await waitUntil { chats().last?.state == .idle }
+        let ids = chats().last!.messageIDs
+        var text: [UUID: String] = [:]
+        for chat in chats() { for message in chat.messages { text[message.id] = message.text } }
+        precondition(ids.count == 2 && text[ids[1]]?.contains("msgblast://comparison/") == true, "The reply streamed to the phone: \(ids.compactMap { text[$0] })")
+        let again = try await ask(.sendToAgent(text: "Again"))
+        precondition(again.outcome == .applied, "\(again)")
+        try await waitUntil { chats().last?.state == .working }
+        let stop = try await ask(.stopAgent)
+        precondition(stop.outcome == .applied, "\(stop)")
+        try await waitUntil { chats().last?.state == .idle && !model.msgblastAgent.isWorking }
     }
 
     /// Optional evidence: renders the actual Settings → Remote section off-screen when

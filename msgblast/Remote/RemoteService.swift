@@ -125,6 +125,7 @@ final class RemoteService: ObservableObject {
             server.onClientChange = { [weak self] connected in self?.clientChanged(connected) }
             server.onPaired = { [weak self] in self?.setAllowMessagesSends(true); self?.model.recordPhonePaired() }
             server.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
+            if model.msgblastAgentAvailable { serveAgent(server) }
             self.host = host; self.projection = projection; self.server = server
             running = true
             problem = nil
@@ -133,6 +134,21 @@ final class RemoteService: ObservableObject {
             problem = (error as? LocalizedError)?.errorDescription ?? "Remote control could not start."
         }
     }
+
+    /// Sends the msgblast agent's changes at most every 150 ms, read after they happen, so streamed text keeps flowing.
+    private func serveAgent(_ server: RemoteServer) {
+        let agent = model.msgblastAgent, activity = model.agentSendActivity
+        server.agentChat = { agent.remoteChat(agentCount: MsgblastAgent.latestAgentCount(activity)) }
+        agent.objectWillChange.map { _ in }.merge(with: activity.objectWillChange.map { _ in }).sink { [weak self, weak server] in
+            guard let self, self.agentPush == nil else { return }
+            self.agentPush = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(150))
+                self.agentPush = nil
+                server?.agentChanged()
+            }
+        }.store(in: &subscriptions)
+    }
+    private var agentPush: Task<Void, Never>?
 
     private func startListener() async {
         guard let identity, let server else { return }

@@ -127,6 +127,8 @@ final class AppModel: ObservableObject {
         try self?.demoAgentRunner() ?? DemoAgentRunner(agents: [], comparisonID: UUID())
     }
     @Published var paneFocus: PaneFocus?
+    /// Where the msgblast agent is offered: the Mac's bar and the phone. Live accounts arrive with the session runners.
+    var msgblastAgentAvailable: Bool { demo }
     lazy var agentControl = AgentControlListener(directory: local.url.deletingLastPathComponent(), host: self)
     lazy var webAgents = WebAgents(directory: local.url.deletingLastPathComponent(), fixture: demo && Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool != true, websiteOptInRequired: true)
     lazy var webImageCache: WebImageCache = WebImageCache(directory: local.url.deletingLastPathComponent().appendingPathComponent("web-images", isDirectory: true), onChange: { [weak self] in

@@ -75,7 +75,7 @@ struct MsgblastAgentBar: View {
             accountSection(.claude, provider: .claude, name: "Claude Code")
             accountSection(.codexLogin, provider: .codex, name: "ChatGPT · Codex")
         } label: {
-            Text(accountName(agent.conversation.account) ?? "Choose account")
+            Text(agent.conversation.account?.displayName ?? "Choose account")
         }
         .menuStyle(.borderlessButton).fixedSize()
         .foregroundStyle(agent.conversation.account == nil ? Self.tint : .secondary)
@@ -101,26 +101,9 @@ struct MsgblastAgentBar: View {
         }
     }
 
-    private func accountName(_ account: MsgblastAgentAccount?) -> String? {
-        switch account {
-        case .claude: "Claude Code"
-        case .codexLogin, .chatGPT: "ChatGPT"
-        case nil: nil
-        }
-    }
-
     private var statusLine: String {
         guard case .working(let tool) = agent.status else { return "" }
-        let own = activity.log.entries.first { $0.client == MsgblastAgent.clientName }
-        switch tool {
-        case "msgblast_agents_list": return "Looking at your agents…"
-        case "msgblast_blast_start", "msgblast_blast_follow_up", "msgblast_agent_message": return "Sending…"
-        case "msgblast_blast_wait":
-            guard let count = own?.agentCount else { return "Waiting for replies…" }
-            return "Sent to \(count == 1 ? "1 agent" : "\(count) agents") · waiting for replies…"
-        case "msgblast_comparison_read": return "Reading replies…"
-        default: return "Thinking…"
-        }
+        return MsgblastAgent.stepLine(tool: tool, agentCount: MsgblastAgent.latestAgentCount(activity))
     }
 
     private func send() {

@@ -57,6 +57,9 @@ final class FakeRemoteHost: RemoteCommandHost {
     func renameConversation(_ id: UUID, title: String) -> RemoteHostResult { renamed.append((id, title)); return .applied(conversationID: id) }
     var avatarReads = 0
     func avatar(_ ref: String) -> Data? { avatarReads += 1; return avatars[ref] }
+    var agentAsks: [String] = [], agentStops = 0
+    func sendToAgent(_ text: String) -> RemoteHostResult { agentAsks.append(text); return .applied(message: "Asked the msgblast agent") }
+    func stopAgent() async -> RemoteHostResult { agentStops += 1; return .applied() }
     func prepareConversation(_ id: UUID?, agentIDs: [String]) async -> RemoteHostResult {
         prepared.append(agentIDs)
         let waiting = agentIDs.filter { agents[$0]?.readiness.acceptsSend == false }
@@ -259,6 +262,45 @@ final class RemoteCommandExecutorTests: XCTestCase {
         XCTAssertEqual(replies["newest"]?.map(\.message), ["Waiting for the previous request", "Started on your Mac", nil],
                        "A queued prepare reports when its turn comes, so the phone's deadline counts from there")
         XCTAssertEqual(replies["send"]?.map(\.outcome), [.applied], "A command that never waited hears only its result")
+    }
+
+    func testAgentTurnsPassTheMacsChecksAndAreNeverRepeated() async {
+        let host = host()
+        let executor = RemoteCommandExecutor(host: host)
+        func run(_ action: RemoteAction) async -> RemoteCommandResult { await executor.execute(RemoteCommand(action: action)) }
+        host.isLocked = true
+        let r1 = await run(.sendToAgent(text: "Compare"))
+        XCTAssertEqual(r1.code, .macLocked)
+        let r2 = await run(.stopAgent)
+        XCTAssertEqual(r2.code, .macLocked)
+        host.isLocked = false
+        host.isBusy = true
+        let r3 = await run(.sendToAgent(text: "Compare"))
+        XCTAssertEqual(r3.code, .macBusy)
+        host.isBusy = false
+        let r4 = await run(.sendToAgent(text: "  \n"))
+        XCTAssertEqual(r4.code, .invalidCommand)
+        XCTAssertTrue(host.agentAsks.isEmpty)
+
+        let ask = RemoteCommand(action: .sendToAgent(text: "Compare"))
+        let r5 = await executor.execute(ask)
+        XCTAssertEqual(r5.outcome, .applied)
+        let replay = await executor.execute(ask)
+        XCTAssertTrue(replay.replayed)
+        XCTAssertEqual(host.agentAsks, ["Compare"], "A replayed id never asks again")
+        let r6 = await run(.stopAgent)
+        XCTAssertEqual(r6.outcome, .applied)
+        XCTAssertEqual(host.agentStops, 1)
+    }
+
+    func testAnAgentTurnWaitsForNoPhoneSendAndIsRefusedDuringOne() async {
+        let host = host()
+        host.sendDelay = .milliseconds(200)
+        let executor = RemoteCommandExecutor(host: host)
+        executor.submit(RemoteCommand(action: .sendPrivate(conversationID: nil, agentID: "claude", text: "Hi", attachmentIDs: []))) { _ in }
+        let r7 = await executor.execute(RemoteCommand(action: .sendToAgent(text: "Compare")))
+        XCTAssertEqual(r7.code, .macBusy)
+        XCTAssertTrue(host.agentAsks.isEmpty)
     }
 
     func testASignedOutWebsiteAgentsReasonNamesTheMacNotThePane() async {

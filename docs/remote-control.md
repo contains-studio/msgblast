@@ -172,7 +172,15 @@ sign-in or token.
   changed since the last update. The Mac sends all of them after each subscribe.
 - It is not in the event journal, so it has no `seq`, and an older phone ignores it. A Mac
   that never sends one has no agent, and answers both commands `unsupported`.
-- `agentSendsStopped` refuses a send while agent sends are stopped on the Mac.
+- A phone ask passes the executor's checks (locked, a phone or Mac send in progress,
+  a replayed id) and then the agent bar's (a set-up account, a readable conversation, no
+  turn already running), and `agentSendsStopped` refuses it while agent sends are stopped
+  on the Mac. It is never retried; its own sends go through the outside-agent tools.
+- The Mac sends changes at most every 150 ms, read after they happen, with the same step
+  line the bar shows ("Sent to 3 agents · waiting for replies…"). Nothing is sent while
+  the Mac is locked; the next update after unlock carries what changed.
+- The agent is offered where the Mac's bar is (`AppModel.msgblastAgentAvailable`, Demo
+  until the live runners land). Demo uses `DemoAgentRunner`, never an account.
 
 ## Availability
 
