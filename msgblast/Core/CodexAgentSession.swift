@@ -50,7 +50,7 @@ public actor CodexAgentSession: MsgblastAgentRunner {
     public func interrupt() async {
         guard turn != nil else { return }
         interruptRequested = true
-        await sendInterrupt()
+        sendInterrupt()
     }
 
     public func close() async {
@@ -98,7 +98,7 @@ public actor CodexAgentSession: MsgblastAgentRunner {
             let result = try await request("turn/start", ["threadId": threadID, "input": [["type": "text", "text": text]]])
             guard number == turnNumber, turn != nil else { return }
             turnID = turnID ?? (result.object["turn"] as? [String: Any])?["id"] as? String
-            if interruptRequested { await sendInterrupt() }
+            if interruptRequested { sendInterrupt() }
         } catch {
             if number == turnNumber { finishTurn(.failed(error.localizedDescription)) }
         }
@@ -232,7 +232,7 @@ public actor CodexAgentSession: MsgblastAgentRunner {
         switch method {
         case "turn/started":
             turnID = (params["turn"] as? [String: Any])?["id"] as? String
-            if interruptRequested { Task { await sendInterrupt() } }
+            if interruptRequested { sendInterrupt() }
         case "item/agentMessage/delta":
             guard let delta = params["delta"] as? String, let id = params["itemId"] as? String else { return }
             drafts[id, default: ""] += delta
@@ -274,11 +274,11 @@ public actor CodexAgentSession: MsgblastAgentRunner {
         turn?.yield(.text(text))
     }
 
-    /// Sent once per turn: Stop, the start reply and `turn/started` can each be the first to know the turn.
-    private func sendInterrupt() async {
-        guard let threadID, let turnID, !interruptSent else { return }
+    /// Asks Codex once per turn to stop. The turn still ends with `turn/completed`, so the answer isn't awaited.
+    private func sendInterrupt() {
+        guard !interruptSent, let threadID, let turnID else { return }
         interruptSent = true
-        _ = try? await request("turn/interrupt", ["threadId": threadID, "turnId": turnID])
+        Task { _ = try? await request("turn/interrupt", ["threadId": threadID, "turnId": turnID]) }
     }
 
     private func finishTurn(_ event: MsgblastAgentEvent) {
