@@ -124,7 +124,8 @@ final class AppModel: ObservableObject {
     lazy var agentSends = AgentControlSends(model: self)
     lazy var wants = WantsModel(app: self)
     lazy var agentControl = AgentControlListener(directory: local.url.deletingLastPathComponent(), host: self)
-    lazy var chatGPT = ChatGPTAccounts(storage: .keychain(service: "com.msgblast.chatgpt.\(Bundle.main.bundleIdentifier ?? "unknown")"))
+    lazy var chatGPT = ChatGPTAccounts(storage: demo ? .memory() : .keychain(service: "com.msgblast.chatgpt.\(Bundle.main.bundleIdentifier ?? "unknown")"))
+    lazy var chatGPTConnection = ChatGPTConnection(accounts: chatGPT, demo: demo, model: self)
     /// Codex's token socket. Demo has none.
     lazy var chatGPTTokens: ChatGPTTokenListener? = demo ? nil : ChatGPTTokenListener(supportDirectory: local.url.deletingLastPathComponent(), accounts: chatGPT)
     lazy var webAgents = WebAgents(directory: local.url.deletingLastPathComponent(), fixture: demo && Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool != true, websiteOptInRequired: true)
