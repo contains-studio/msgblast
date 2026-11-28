@@ -123,6 +123,7 @@ struct MainWindowActions {
     var showAgents: () -> Void
     var showDiscover: () -> Void
     var showWants: () -> Void
+    var toggleAgent: () -> Void
     var canStartBlast: Bool
 }
 
@@ -158,6 +159,8 @@ private struct BlastCommands: Commands {
                 .keyboardShortcut("2").disabled(actions == nil)
             Button("Show Wants") { actions?.showWants() }
                 .keyboardShortcut("3").disabled(actions == nil)
+            Button("msgblast Agent") { actions?.toggleAgent() }
+                .keyboardShortcut("4").disabled(actions == nil)
         }
         CommandGroup(after: .textEditing) {
             Button("Find in Discover…") { find?() }

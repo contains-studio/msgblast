@@ -2,75 +2,74 @@ import AppKit
 import SwiftUI
 import msgblastCore
 
-/// The built-in msgblast agent above the agents workspace: one line when collapsed, a Messages-style
-/// conversation when open.
+/// Where the person expanded the msgblast agent into the whole agents area.
+enum MsgblastAgentLayout {
+    static let expandedKey = "MsgblastAgentBarExpanded"
+    static let seenReplyKey = "MsgblastAgentSeenReply"
+}
+
+/// The msgblast agent collapsed to one line above the agents. It shows what the agent is doing, and its newest
+/// reply until the person opens the conversation.
 struct MsgblastAgentBar: View {
     @ObservedObject var model: AppModel
     @ObservedObject var agent: MsgblastAgentController
     @ObservedObject var accounts: PersonalAgentController
     @ObservedObject var activity: AgentControlActivity
     @ObservedObject var chatGPT: ChatGPTConnection
-    /// About a third of the window, so the grid stays visible.
-    let maxHeight: CGFloat
-    @AppStorage("MsgblastAgentBarExpanded") private var expanded = false
+    @AppStorage(MsgblastAgentLayout.expandedKey) private var expanded = false
+    @AppStorage(MsgblastAgentLayout.seenReplyKey) private var seenReply = ""
     @State private var draft = ""
 
     var body: some View {
-        VStack(spacing: 0) {
-            if expanded {
-                header
-                Divider()
-                MsgblastAgentThread(model: model, agent: agent, activity: activity, open: open)
-                    .frame(maxHeight: max(120, maxHeight - 100))
-                MsgblastAgentComposer(agent: agent, draft: $draft, send: send)
-            } else {
-                collapsed
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "sparkles").foregroundStyle(Color.accentColor).accessibilityHidden(true)
+                if agent.isWorking {
+                    MsgblastAgentTyping(compact: true)
+                    Text(MsgblastAgentThread.status(agent: agent, activity: activity)).foregroundStyle(.secondary).lineLimit(1)
+                    Spacer()
+                    Button("Stop") { Task { await agent.stop() } }
+                } else {
+                    TextField("Message msgblast agent", text: $draft)
+                        .textFieldStyle(.plain)
+                        .onSubmit(send)
+                        .disabled(agent.loadError != nil || agent.conversation.account == nil)
+                        .accessibilityLabel("Message msgblast agent")
+                    MsgblastAgentAccountMenu(model: model, agent: agent, accounts: accounts, chatGPT: chatGPT)
+                }
+                Button { withAnimation(.snappy) { expanded = true } } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                }
+                .buttonStyle(.borderless)
+                .help("Open the msgblast agent (⌘4)")
+                .accessibilityLabel("Expand msgblast agent")
+            }
+            if let reply = unseenReply {
+                Button { withAnimation(.snappy) { expanded = true } } label: {
+                    HStack(spacing: 6) {
+                        Text(reply).lineLimit(1).truncationMode(.tail).foregroundStyle(.secondary)
+                        Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
+                }
+                .buttonStyle(.plain)
+                .padding(.leading, 26).padding(.top, 6)
+                .accessibilityLabel("Show the msgblast agent's reply")
             }
         }
+        .padding(.horizontal, 18).padding(.vertical, 12)
         .background(.bar)
         .overlay(alignment: .bottom) { Divider() }
+        .help(agent.loadError ?? "")
         .task { await accounts.discover(); await accounts.refreshAccounts(); await chatGPT.load() }
     }
 
-    private var collapsed: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "sparkles").foregroundStyle(Color.accentColor).accessibilityHidden(true)
-            if agent.isWorking {
-                MsgblastAgentTyping(compact: true)
-                Text(MsgblastAgentThread.status(agent: agent, activity: activity)).foregroundStyle(.secondary).lineLimit(1)
-                Spacer()
-                Button("Stop") { Task { await agent.stop() } }
-            } else {
-                TextField("Message msgblast agent", text: $draft)
-                    .textFieldStyle(.plain)
-                    .onSubmit(send)
-                    .disabled(agent.loadError != nil || agent.conversation.account == nil)
-                    .accessibilityLabel("Message msgblast agent")
-                MsgblastAgentAccountMenu(model: model, agent: agent, accounts: accounts, chatGPT: chatGPT)
-            }
-            expandButton
-        }
-        .padding(.horizontal, 18).padding(.vertical, 12)
-        .help(agent.loadError ?? "")
-    }
-
-    private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "sparkles").foregroundStyle(Color.accentColor).accessibilityHidden(true)
-            Text("msgblast agent").font(.headline)
-            Spacer()
-            MsgblastAgentAccountMenu(model: model, agent: agent, accounts: accounts, chatGPT: chatGPT)
-            expandButton
-        }
-        .padding(.horizontal, 18).padding(.vertical, 10)
-    }
-
-    private var expandButton: some View {
-        Button { withAnimation(.snappy) { expanded.toggle() } } label: {
-            Image(systemName: expanded ? "chevron.up" : "chevron.down")
-        }
-        .buttonStyle(.borderless)
-        .accessibilityLabel(expanded ? "Collapse msgblast agent" : "Expand msgblast agent")
+    /// The newest reply, as plain text, until the person opens the conversation.
+    private var unseenReply: String? {
+        guard !agent.isWorking, let last = agent.conversation.messages.last(where: { $0.role == .agent && $0.note != true }),
+              last.id.uuidString != seenReply else { return nil }
+        let text = MsgblastAgentText.render(MsgblastAgentText.comparisonCards(in: last.text).text).string
+            .replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\t", with: " ")
+        return text.isEmpty ? nil : text
     }
 
     private func send() {
@@ -78,20 +77,86 @@ struct MsgblastAgentBar: View {
         let sent = agent.conversation.messages.count
         agent.send(draft)
         // Keep the draft when the message could not be saved.
-        guard agent.conversation.messages.count > sent else { return }
-        draft = ""
-        withAnimation(.snappy) { expanded = true }
+        if agent.conversation.messages.count > sent { draft = "" }
+    }
+}
+
+/// The msgblast agent filling the agents area, in place of the grid, comparison columns and shared composer.
+struct MsgblastAgentPanel: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var agent: MsgblastAgentController
+    @ObservedObject var accounts: PersonalAgentController
+    @ObservedObject var activity: AgentControlActivity
+    @ObservedObject var chatGPT: ChatGPTConnection
+    @AppStorage(MsgblastAgentLayout.expandedKey) private var expanded = false
+    @AppStorage(MsgblastAgentLayout.seenReplyKey) private var seenReply = ""
+    @State private var draft = ""
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles").foregroundStyle(Color.accentColor).accessibilityHidden(true)
+                Text("msgblast agent").font(.headline)
+                Spacer()
+                MsgblastAgentAccountMenu(model: model, agent: agent, accounts: accounts, chatGPT: chatGPT)
+                Button { withAnimation(.snappy) { expanded = false } } label: {
+                    Image(systemName: "arrow.down.right.and.arrow.up.left")
+                }
+                .buttonStyle(.borderless)
+                .help("Back to the agents (⌘4)")
+                .accessibilityLabel("Collapse msgblast agent")
+            }
+            .padding(.horizontal, 18).padding(.vertical, 10)
+            .background(.bar)
+            Divider()
+            if agent.conversation.messages.isEmpty && !agent.isWorking {
+                VStack(spacing: 6) {
+                    Image(systemName: "sparkles").font(.system(size: 28)).foregroundStyle(Color.accentColor)
+                    Text("Ask your agents anything").font(.headline)
+                    Text("msgblast agent sends it to your agents and sums up their replies.")
+                        .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                }
+                .padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                MsgblastAgentThread(model: model, agent: agent, activity: activity) { model.openAgentLink($0) }
+                    .frame(maxWidth: 820).frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            Divider()
+            MsgblastAgentComposer(agent: agent, draft: $draft, send: send)
+                .frame(maxWidth: 820).frame(maxWidth: .infinity)
+                .background(.bar)
+        }
+        .background(Color(nsColor: .textBackgroundColor))
+        .onAppear(perform: markSeen)
+        .onChange(of: agent.conversation.messages) { _, _ in markSeen() }
+        .task { await accounts.discover(); await accounts.refreshAccounts(); await chatGPT.load() }
     }
 
-    /// Opens a comparison link in the grid and scrolls to its `agent`; https opens in the browser; anything else is ignored.
-    private func open(_ url: URL) {
+    private func markSeen() {
+        if let last = agent.conversation.messages.last(where: { $0.role == .agent && $0.note != true }) { seenReply = last.id.uuidString }
+    }
+
+    private func send() {
+        guard !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let sent = agent.conversation.messages.count
+        agent.send(draft)
+        // Keep the draft when the message could not be saved.
+        if agent.conversation.messages.count > sent { draft = "" }
+    }
+}
+
+extension AppModel {
+    /// Opens a comparison link in the grid and scrolls to its `agent`, collapsing the msgblast agent so the
+    /// comparison shows. https opens in the browser; anything else is ignored.
+    func openAgentLink(_ url: URL) {
         guard url.scheme == "msgblast" else { if url.scheme == "https" { NSWorkspace.shared.open(url) }; return }
-        guard url.host == "comparison", let id = UUID(uuidString: url.lastPathComponent), model.comparison(id) != nil else { return }
-        model.keepsWindowFrame = id
-        model.coordinator?.open(id)
+        guard url.host == "comparison", let id = UUID(uuidString: url.lastPathComponent), comparison(id) != nil else { return }
+        UserDefaults.standard.set(false, forKey: MsgblastAgentLayout.expandedKey)
+        keepsWindowFrame = id
+        coordinator?.open(id)
         let agentID = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "agent" }?.value
-        if let pane = model.webAgents.sessions.first(where: { $0.id.gridID.id == agentID }) {
-            model.paneFocus = PaneFocus(comparisonID: id, paneID: pane.id.id)
+        if let pane = webAgents.sessions.first(where: { $0.id.gridID.id == agentID }) {
+            paneFocus = PaneFocus(comparisonID: id, paneID: pane.id.id)
         }
     }
 }

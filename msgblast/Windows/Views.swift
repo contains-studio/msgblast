@@ -186,7 +186,7 @@ struct MainView: View {
     @StateObject private var captureLayout = ChatCaptureLayout()
     @State private var selection = DetailSelection.agents
     @State private var showingComparison: Bool
-    @State private var detailHeight: CGFloat = 560
+    @AppStorage(MsgblastAgentLayout.expandedKey) private var agentExpanded = false
     private var sidebarSelectionColor: Color { Color.primary.opacity(controlActiveState == .inactive ? 0.06 : 0.10) }
     private var sidebarIconColor: Color { controlActiveState == .inactive ? .secondary : .accentColor }
     private var showingAgents: Bool { selection == .agents && !showingComparison }
@@ -273,11 +273,19 @@ struct MainView: View {
                     }.padding(18).background(.bar)
                     }
                 }
-                MsgblastAgentBar(model: model, agent: model.msgblastAgent, accounts: model.personalAgent, activity: model.agentSendActivity, chatGPT: model.chatGPTConnection, maxHeight: detailHeight / 3)
+                if !agentExpanded {
+                    MsgblastAgentBar(model: model, agent: model.msgblastAgent, accounts: model.personalAgent, activity: model.agentSendActivity, chatGPT: model.chatGPTConnection)
+                }
                 StatusBanners(model: model)
-                AgentsWorkspaceView(model: model, web: model.webAgents, showingComparison: $showingComparison, newBlastRequest: model.newBlastRequest, captureLayout: captureLayout)
+                // The agent threads stay loaded under the open msgblast agent, so their pages and app sessions keep going.
+                ZStack {
+                    AgentsWorkspaceView(model: model, web: model.webAgents, showingComparison: $showingComparison, newBlastRequest: model.newBlastRequest, captureLayout: captureLayout)
+                        .opacity(agentExpanded ? 0 : 1).allowsHitTesting(!agentExpanded).accessibilityHidden(agentExpanded)
+                    if agentExpanded {
+                        MsgblastAgentPanel(model: model, agent: model.msgblastAgent, accounts: model.personalAgent, activity: model.agentSendActivity, chatGPT: model.chatGPTConnection)
+                    }
+                }
             }.navigationTitle("")
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { detailHeight = $0 }
             }
         }
         .frame(minWidth: 760, minHeight: 560)
@@ -288,9 +296,10 @@ struct MainView: View {
             showAgents: { showAgentGrid() },
             showDiscover: { selection = .discover },
             showWants: { selection = .wants },
+            toggleAgent: { selection = .agents; withAnimation(.snappy) { agentExpanded.toggle() } },
             canStartBlast: model.canStartNewBlast))
-        .onChange(of: model.newBlastRequest) { _, _ in selection = .agents; showingComparison = model.newBlastShowsChat }
-        .onChange(of: model.webComparisonRequest) { _, _ in selection = .agents; showingComparison = true }
+        .onChange(of: model.newBlastRequest) { _, _ in selection = .agents; showingComparison = model.newBlastShowsChat; agentExpanded = false }
+        .onChange(of: model.webComparisonRequest) { _, _ in selection = .agents; showingComparison = true; agentExpanded = false }
         .alert("msgblast", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button("OK") { model.error = nil }
         } message: { Text(model.error ?? "") }
