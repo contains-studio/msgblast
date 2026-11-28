@@ -44,7 +44,7 @@ import msgblastRemoteProtocol
             return await self.executor.execute(command)
         }
         // The person asked the msgblast agent, so note who it sent to and show the comparison its blast or follow-up went to.
-        if client == MsgblastAgent.clientName, result.outcome == .applied {
+        if client == MsgblastAgent.clientName, result.outcome == .applied, !result.replayed {
             model.noteAgentSend(command.action, comparison: result.conversationID)
             switch command.action {
             case .createConversation, .sendShared: result.conversationID.map(model.showAgentComparison)
