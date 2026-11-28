@@ -187,6 +187,7 @@ struct MainView: View {
     @State private var selection = DetailSelection.agents
     @State private var showingComparison: Bool
     @AppStorage(MsgblastAgentLayout.expandedKey) private var agentExpanded = false
+    @State private var agentDraft = ""
     private var sidebarSelectionColor: Color { Color.primary.opacity(controlActiveState == .inactive ? 0.06 : 0.10) }
     private var sidebarIconColor: Color { controlActiveState == .inactive ? .secondary : .accentColor }
     private var showingAgents: Bool { selection == .agents && !showingComparison }
@@ -274,7 +275,7 @@ struct MainView: View {
                     }
                 }
                 if !agentExpanded {
-                    MsgblastAgentBar(model: model, agent: model.msgblastAgent, accounts: model.personalAgent, activity: model.agentSendActivity, chatGPT: model.chatGPTConnection)
+                    MsgblastAgentBar(model: model, agent: model.msgblastAgent, accounts: model.personalAgent, activity: model.agentSendActivity, chatGPT: model.chatGPTConnection, draft: $agentDraft)
                 }
                 StatusBanners(model: model)
                 // The agent threads stay loaded under the open msgblast agent, so their pages and app sessions keep going.
@@ -282,7 +283,7 @@ struct MainView: View {
                     AgentsWorkspaceView(model: model, web: model.webAgents, showingComparison: $showingComparison, newBlastRequest: model.newBlastRequest, captureLayout: captureLayout)
                         .opacity(agentExpanded ? 0 : 1).allowsHitTesting(!agentExpanded).accessibilityHidden(agentExpanded)
                     if agentExpanded {
-                        MsgblastAgentPanel(model: model, agent: model.msgblastAgent, accounts: model.personalAgent, activity: model.agentSendActivity, chatGPT: model.chatGPTConnection)
+                        MsgblastAgentPanel(model: model, agent: model.msgblastAgent, accounts: model.personalAgent, activity: model.agentSendActivity, chatGPT: model.chatGPTConnection, draft: $agentDraft)
                     }
                 }
             }.navigationTitle("")
@@ -300,6 +301,7 @@ struct MainView: View {
             canStartBlast: model.canStartNewBlast))
         .onChange(of: model.newBlastRequest) { _, _ in selection = .agents; showingComparison = model.newBlastShowsChat; agentExpanded = false }
         .onChange(of: model.webComparisonRequest) { _, _ in selection = .agents; showingComparison = true; agentExpanded = false }
+        .onChange(of: agentExpanded) { _, expanded in if expanded { NSApp.keyWindow?.makeFirstResponder(nil) } }
         .alert("msgblast", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button("OK") { model.error = nil }
         } message: { Text(model.error ?? "") }

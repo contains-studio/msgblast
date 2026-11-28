@@ -18,7 +18,7 @@ struct MsgblastAgentBar: View {
     @ObservedObject var chatGPT: ChatGPTConnection
     @AppStorage(MsgblastAgentLayout.expandedKey) private var expanded = false
     @AppStorage(MsgblastAgentLayout.seenReplyKey) private var seenReply = ""
-    @State private var draft = ""
+    @Binding var draft: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -90,7 +90,7 @@ struct MsgblastAgentPanel: View {
     @ObservedObject var chatGPT: ChatGPTConnection
     @AppStorage(MsgblastAgentLayout.expandedKey) private var expanded = false
     @AppStorage(MsgblastAgentLayout.seenReplyKey) private var seenReply = ""
-    @State private var draft = ""
+    @Binding var draft: String
 
     var body: some View {
         VStack(spacing: 0) {
@@ -109,7 +109,7 @@ struct MsgblastAgentPanel: View {
             .padding(.horizontal, 18).padding(.vertical, 10)
             .background(.bar)
             Divider()
-            if agent.conversation.messages.isEmpty && !agent.isWorking {
+            if agent.conversation.messages.isEmpty && agent.status == .idle {
                 VStack(spacing: 6) {
                     Image(systemName: "sparkles").font(.system(size: 28)).foregroundStyle(Color.accentColor)
                     Text("Ask your agents anything").font(.headline)

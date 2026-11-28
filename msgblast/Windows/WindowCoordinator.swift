@@ -225,6 +225,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, NSToolbarDelegate {
             return
         }
         if workspaceComparisonID == id, let workspaceWindow {
+            UserDefaults.standard.set(false, forKey: MsgblastAgentLayout.expandedKey)
             workspaceWindow.makeKeyAndOrderFront(nil)
             return
         }
