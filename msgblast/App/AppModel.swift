@@ -231,7 +231,10 @@ final class AppModel: ObservableObject {
             throw AppFailure.blocked("Send a blast first, then ask the msgblast agent about it.")
         }
         let agents = comparison.resolvedWebAgentIDs.map { DemoAgentRunner.Agent(id: $0.gridID.id, name: webAgents.name(for: $0)) }
-        return DemoAgentRunner(agents: agents, comparisonID: comparison.id)
+        let names = agents.map(\.name).formatted(.list(type: .and))
+        return DemoAgentRunner(agents: agents, comparisonID: comparison.id) { [weak self] in
+            Task { @MainActor in self?.msgblastAgent.note("Sent to \(names)") }
+        }
     }
     func save() throws {
         guard !storageLoadFailed else { throw AppFailure.blocked("Saved state is unavailable. It will not be overwritten. You can quit or update after new drafts are saved separately in \(local.url.deletingLastPathComponent().appendingPathComponent("Recovery").path). Repair the saved state before sending.") }

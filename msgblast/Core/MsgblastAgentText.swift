@@ -36,6 +36,38 @@ public enum MsgblastAgentText {
         return result
     }
 
+    /// Takes comparison links (`msgblast://comparison/<id>` without `?agent=`) out of a reply, so they can be shown
+    /// as cards rather than raw links. Returns the remaining text and the comparisons, in order and without repeats.
+    public static func comparisonCards(in text: String) -> (text: String, comparisons: [UUID]) {
+        let link = #"msgblast://comparison/([0-9A-Fa-f-]{36})(?![0-9A-Za-z?-])"#
+        let pattern = try! NSRegularExpression(pattern: #"\[[^\]]*\]\("# + link + #"\)|<?"# + link + #">?"#)
+        var comparisons: [UUID] = []
+        let range = NSRange(text.startIndex..., in: text)
+        for match in pattern.matches(in: text, range: range) {
+            let group = match.range(at: 1).location != NSNotFound ? 1 : 2
+            if let id = Range(match.range(at: group), in: text).flatMap({ UUID(uuidString: String(text[$0])) }), !comparisons.contains(id) {
+                comparisons.append(id)
+            }
+        }
+        let stripped = pattern.stringByReplacingMatches(in: text, range: range, withTemplate: "")
+        // Separators left next to a removed link, and lines left with nothing to say, go too.
+        var lines: [String] = []
+        for line in stripped.components(separatedBy: "\n") {
+            let cleaned = line.replacingOccurrences(of: #"(\s*[·—|])*\s*$"#, with: "", options: .regularExpression)
+                .replacingOccurrences(of: #"^\s*([·—|]\s*)+"#, with: "", options: .regularExpression)
+            let bare = cleaned.trimmingCharacters(in: .whitespaces)
+            if bare.isEmpty || bare.allSatisfy({ "-*·—|:.".contains($0) }) {
+                if line.trimmingCharacters(in: .whitespaces).isEmpty { lines.append("") }
+                continue
+            }
+            lines.append(cleaned)
+        }
+        var result: [String] = []
+        for line in lines where !(line.isEmpty && (result.last?.isEmpty ?? true)) { result.append(line) }
+        while result.last?.isEmpty == true { result.removeLast() }
+        return (result.joined(separator: "\n"), comparisons)
+    }
+
     private static func inline(_ text: String, size: CGFloat, color: NSColor, weight: NSFont.Weight) -> NSAttributedString {
         let parsed = (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
             ?? AttributedString(text)
