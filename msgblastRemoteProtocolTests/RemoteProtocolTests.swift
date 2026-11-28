@@ -95,6 +95,12 @@ final class RemoteProtocolCodingTests: XCTestCase {
         guard case .agent(let replayed) = try RemoteProtocol.decoder().decode(RemoteClientDriver.Event.self, from: recorded) else { return XCTFail("Not an agent event") }
         XCTAssertEqual(replayed, chat)
         try roundTrip(RemoteAgentChat(account: nil, state: .failed, line: "Couldn't start", detail: "The CLI is missing.", messageIDs: [], messages: []))
+        let stopped = RemoteAgentMessage(id: UUID(), fromPerson: false, text: "Stopped", created: date, note: true)
+        try roundTrip(stopped)
+        // A message from a Mac without dates or notes still decodes, as a bubble with no time.
+        let plain = try RemoteProtocol.decoder().decode(RemoteAgentMessage.self, from: Data(#"{"id":"\#(UUID().uuidString)","fromPerson":false,"text":"Hi"}"#.utf8))
+        XCTAssertNil(plain.created)
+        XCTAssertNil(plain.note)
         // A newer Mac's state stays readable, and is never mistaken for working.
         let newer = try RemoteProtocol.decoder().decode(RemoteAgentChat.self, from: Data(#"{"state":"dreaming","messageIDs":[],"messages":[]}"#.utf8))
         XCTAssertEqual(newer.state.rawValue, "dreaming")

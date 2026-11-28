@@ -169,7 +169,9 @@ sign-in or token.
 - `RemoteMessage.agent` carries the account name (nil until one is set up on the Mac), the
   state (`idle`, `working`, `failed`) with one short line (the current step, or what went
   wrong, with the full text as `detail`), the newest message ids, and the messages that
-  changed since the last update. The Mac sends all of them after each subscribe.
+  changed since the last update. The Mac sends all of them after each subscribe. Each
+  message may carry when it was written (`created`) and whether it is a centred status
+  line such as "Stopped" (`note`); older Macs send neither.
 - It is not in the event journal, so it has no `seq`, and an older phone ignores it. A Mac
   that never sends one has no agent, and answers both commands `unsupported`.
 - `agentSendsStopped` refuses a send while agent sends are stopped on the Mac.

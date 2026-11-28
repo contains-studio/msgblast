@@ -35,5 +35,11 @@ public struct RemoteAgentMessage: Codable, Hashable, Sendable, Identifiable {
     public var fromPerson: Bool
     /// Markdown. Comparison links are `msgblast://comparison/<id>`, optionally with `?agent=<agent id>`.
     public var text: String
-    public init(id: UUID, fromPerson: Bool, text: String) { self.id = id; self.fromPerson = fromPerson; self.text = text }
+    /// When it was written on the Mac; nil when the Mac did not record it.
+    public var created: Date?
+    /// A small centred status line, such as "Stopped", rather than a bubble. Older Macs never set it.
+    public var note: Bool?
+    public init(id: UUID, fromPerson: Bool, text: String, created: Date? = nil, note: Bool? = nil) {
+        self.id = id; self.fromPerson = fromPerson; self.text = text; self.created = created; self.note = note
+    }
 }
