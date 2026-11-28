@@ -189,6 +189,16 @@ final class ChatGPTTokenSharingTests: XCTestCase {
         XCTAssertFalse(saved.values.contains { String(decoding: $0, as: UTF8.self).contains("r1") }, "no token is kept after disconnecting")
     }
 
+    /// An ad-hoc signed copy gets -34018 on every Keychain write: showing Settings must still work, and
+    /// starting a sign-in must say why it cannot, before any browser opens.
+    func testMissingKeychainEntitlementIsReportedBeforeSignIn() async {
+        let accounts = ChatGPTAccounts(storage: .init(read: { _ in nil }, write: { _, _ in throw ChatGPTSignInError.storageUnavailable }))
+        let current = try? await accounts.current()
+        XCTAssertNil(current ?? nil)
+        do { _ = try await accounts.signInURL(redirect: URL(string: "http://127.0.0.1:1/auth/callback")!); XCTFail() }
+        catch { XCTAssertEqual(error as? ChatGPTSignInError, .storageUnavailable) }
+    }
+
     func testUnreadableStorageIsNotReplaced() async {
         let accounts = ChatGPTAccounts(storage: .init(read: { _ in throw ChatGPTSignInError.storage }, write: { _, _ in XCTFail("overwrote storage") }))
         do { _ = try await accounts.current(); XCTFail() } catch { XCTAssertEqual(error as? ChatGPTSignInError, .storage) }
