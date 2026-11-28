@@ -51,6 +51,11 @@ public enum RemoteAction: Codable, Hashable, Sendable {
     /// they fit `maxBytes` and `RemoteProtocol.maximumAttachmentFetchBytes`. Older Macs answer
     /// `unsupported`.
     case fetchAttachment(turnID: String, index: Int, maxBytes: Int)
+    /// Asks the msgblast agent on the Mac, with the account chosen there. The result says the turn
+    /// started; its progress and reply arrive as `RemoteMessage.agent`. Older Macs answer `unsupported`.
+    case sendToAgent(text: String)
+    /// Stops the msgblast agent's current turn. Anything it already submitted stays submitted.
+    case stopAgent
     case unknown(kind: String)
 
     public var kind: String {
@@ -83,6 +88,8 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         case .fetchAvatar: "fetchAvatar"
         case .renameConversation: "renameConversation"
         case .fetchAttachment: "fetchAttachment"
+        case .sendToAgent: "sendToAgent"
+        case .stopAgent: "stopAgent"
         case .unknown(let kind): kind
         case .createConversation, .sendShared, .sendPrivate, .endConversation, .chooseAction, .acknowledgeIncomplete, .cancelNative,
              .setKeepAwake, .uploadAttachmentChunk, .attachStaged, .requestReport, .prepareConversation: kind
@@ -154,6 +161,8 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         case "fetchAttachment":
             return .fetchAttachment(turnID: try c.decode(String.self, forKey: .turnID), index: try c.decode(Int.self, forKey: .index), maxBytes: try c.decode(Int.self, forKey: .maxBytes))
         case "renameConversation": return .renameConversation(conversationID: try c.decode(UUID.self, forKey: .conversationID), title: try c.decode(String.self, forKey: .title))
+        case "sendToAgent": return .sendToAgent(text: try c.decode(String.self, forKey: .text))
+        case "stopAgent": return .stopAgent
         default: return .unknown(kind: kind)
         }
     }
@@ -165,7 +174,7 @@ public enum RemoteAction: Codable, Hashable, Sendable {
             try encodeMessageFields(into: &c)
         case .setKeepAwake, .uploadAttachmentChunk, .attachStaged, .requestReport, .prepareConversation:
             try encodeTransferFields(into: &c)
-        case .queryCommand, .fetchAvatar, .renameConversation, .fetchAttachment, .unknown:
+        case .queryCommand, .fetchAvatar, .renameConversation, .fetchAttachment, .sendToAgent, .stopAgent, .unknown:
             try encodeLookupFields(into: &c)
         }
     }
@@ -206,6 +215,7 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         case .renameConversation(let id, let title): try c.encode(id, forKey: .conversationID); try c.encode(title, forKey: .title)
         case .fetchAttachment(let turnID, let index, let maxBytes):
             try c.encode(turnID, forKey: .turnID); try c.encode(index, forKey: .index); try c.encode(maxBytes, forKey: .maxBytes)
+        case .sendToAgent(let text): try c.encode(text, forKey: .text)
         default: break
         }
     }
@@ -238,6 +248,8 @@ public struct RemoteRejectionCode: RemoteOpenValue {
     public static let unknownAvatar: Self = "unknownAvatar"
     /// `fetchAttachment` named a file the Mac does not have, or one too large to send.
     public static let attachmentUnavailable: Self = "attachmentUnavailable"
+    /// The person stopped agent sends in msgblast (outside agents, and the msgblast agent asked from the phone). Nothing was sent.
+    public static let agentSendsStopped: Self = "agentSendsStopped"
 }
 
 public struct RemoteCommandResult: Codable, Hashable, Sendable {

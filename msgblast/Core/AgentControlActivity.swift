@@ -1,11 +1,6 @@
 import Foundation
 import msgblastRemoteProtocol
 
-public extension RemoteRejectionCode {
-    /// The person stopped agent sends in msgblast. Nothing was sent.
-    static let agentSendsStopped: Self = "agentSendsStopped"
-}
-
 /// One send an outside agent asked for. It never holds the message text.
 public struct AgentControlActivityEntry: Identifiable, Equatable, Sendable {
     public let id: UUID
