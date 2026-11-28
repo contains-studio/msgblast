@@ -14,9 +14,12 @@ final class CodexAgentSessionTests: XCTestCase {
                                         instructions: "Only message AI agents.", sessionKey: "session-secret")
         let tool = "msgblast_agents_list"
         let reply = await events(session.send("reply"))
+        // The progress note is left out; only the answer is shown.
         XCTAssertEqual(reply, [.tool(name: tool, finished: false, failed: false), .tool(name: tool, finished: true, failed: false),
-                               .text("Codex "), .text("replied"), .text("\n\n"), .text("Codex "), .text("replied"),
-                               .completed(sessionID: "thread-fixture")])
+                               .text("Codex replied"), .completed(sessionID: "thread-fixture")])
+        // Without phases, only the last message counts as the answer.
+        let unphased = await events(session.send("unphased"))
+        XCTAssertEqual(unphased.filter { if case .text = $0 { true } else { false } }, [.text("Codex replied")])
         await session.close()
 
         let log = try requests(in: directory)

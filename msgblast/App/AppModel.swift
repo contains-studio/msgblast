@@ -128,6 +128,8 @@ final class AppModel: ObservableObject {
         return try self.personalAgent.demo ? self.demoAgentRunner() : self.liveAgentRunner(account, sessionID: sessionID)
     }
     @Published var paneFocus: PaneFocus?
+    /// A comparison the msgblast agent opened. Showing it keeps the window's size.
+    @Published var keepsWindowFrame: UUID?
     /// A Settings page title to open, such as "CLI tools" for Connect with ChatGPT.
     @Published var settingsPageRequest: String?
     lazy var agentControl = AgentControlListener(directory: local.url.deletingLastPathComponent(), host: self)
@@ -192,6 +194,12 @@ final class AppModel: ObservableObject {
         if TelemetryCollector.endpoint(demo: demo) != nil {
             telemetryTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in Task { @MainActor in self?.telemetryHeartbeat() } }
         }
+    }
+    /// Shows a comparison the msgblast agent started or followed up, as New Blast does, without resizing the window.
+    func showAgentComparison(_ id: UUID) {
+        guard comparison(id)?.resolvedWebAgentIDs.isEmpty == false else { return }
+        keepsWindowFrame = id
+        if webAgents.comparisonID == id { webComparisonRequest = UUID() } else { openWebComparison(id) }
     }
     /// The msgblast agent on the person's Claude Code, `codex login`, or Connect with ChatGPT account.
     private func liveAgentRunner(_ account: MsgblastAgentAccount, sessionID: String?) -> MsgblastAgentRunner {

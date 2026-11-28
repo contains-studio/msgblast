@@ -60,7 +60,7 @@ struct MsgblastAgentBar: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     ForEach(agent.conversation.messages.suffix(40)) { message in
-                        LinkedText(text: Self.markdown(message.text), person: message.role == .person, open: open)
+                        LinkedText(message: message, open: open)
                             .id(message.id)
                     }
                 }.padding(.horizontal, 18).padding(.bottom, 12)
@@ -158,6 +158,7 @@ struct MsgblastAgentBar: View {
     private func open(_ url: URL) {
         guard url.scheme == "msgblast" else { if url.scheme == "https" { NSWorkspace.shared.open(url) }; return }
         guard url.host == "comparison", let id = UUID(uuidString: url.lastPathComponent), model.comparison(id) != nil else { return }
+        model.keepsWindowFrame = id
         model.coordinator?.open(id)
         let agentID = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "agent" }?.value
         if let pane = model.webAgents.sessions.first(where: { $0.id.gridID.id == agentID }) {
@@ -165,15 +166,11 @@ struct MsgblastAgentBar: View {
         }
     }
 
-    private static func markdown(_ text: String) -> AttributedString {
-        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
-    }
 }
 
 /// Message text whose links come to `open` instead of the system, so msgblast links never leave the app.
 private struct LinkedText: NSViewRepresentable {
-    let text: AttributedString
-    let person: Bool
+    let message: MsgblastAgentMessage
     let open: (URL) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -188,10 +185,16 @@ private struct LinkedText: NSViewRepresentable {
     }
     func updateNSView(_ view: NSTextView, context: Context) {
         context.coordinator.open = open
-        let styled = NSMutableAttributedString(text)
-        let range = NSRange(location: 0, length: styled.length)
-        styled.addAttributes([.font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: person ? .semibold : .regular),
-                              .foregroundColor: person ? NSColor.secondaryLabelColor : NSColor.labelColor], range: range)
+        let styled: NSAttributedString
+        if message.stopped == true {
+            styled = NSAttributedString(string: message.text, attributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+                                                                            .foregroundColor: NSColor.tertiaryLabelColor])
+        } else if message.role == .person {
+            styled = MsgblastAgentText.render(message.text, color: .secondaryLabelColor, weight: .semibold)
+        } else {
+            styled = MsgblastAgentText.render(message.text)
+        }
+        guard view.textStorage?.isEqual(to: styled) != true else { return }
         view.textStorage?.setAttributedString(styled)
     }
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: NSTextView, context: Context) -> CGSize? {

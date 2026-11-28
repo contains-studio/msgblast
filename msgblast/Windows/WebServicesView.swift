@@ -169,7 +169,7 @@ struct AgentsWorkspaceView: View {
 
     private var comparisonPanes: some View {
         chatColumns
-            .background(ChatWindowFrame(chatCount: comparisonChatCount, enabled: !preservesWindowFrame))
+            .background(ChatWindowFrame(chatCount: comparisonChatCount, enabled: !preservesWindowFrame && model.keepsWindowFrame != nativeComparison?.id))
     }
 
     private var chatColumns: some View {

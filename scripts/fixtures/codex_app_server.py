@@ -2,7 +2,7 @@
 
 Usage: codex_app_server.py LOG_DIR app-server [-c key=value ...]
 Messages follow `codex app-server generate-json-schema` from codex-cli 0.172.0.
-The turn text picks the scenario: "reply", "approvals", "wait", "fail" or "exit".
+The turn text picks the scenario: "reply", "unphased", "approvals", "wait", "fail" or "exit".
 """
 import json
 import os
@@ -79,10 +79,15 @@ while True:
         tool = {"type": "mcpToolCall", "id": "tool-1", "server": "msgblast", "tool": "msgblast_agents_list", "arguments": {}}
         notify("item/started", threadId=thread, turnId=turn, startedAtMs=1, item={**tool, "status": "inProgress"})
         notify("item/completed", threadId=thread, turnId=turn, completedAtMs=2, item={**tool, "status": "completed"})
-        for item in ("message-1", "message-2"):
-            notify("item/started", threadId=thread, turnId=turn, startedAtMs=3, item={"type": "agentMessage", "id": item, "text": ""})
-            for delta in ("Codex ", "replied"):
+        # A progress note, then the answer. "unphased" leaves out the phase, as older models do.
+        messages = [("message-1", ("I'll check ", "the agents."), "commentary"), ("message-2", ("Codex ", "replied"), "final_answer")]
+        for item, deltas, phase in messages:
+            phase = None if text == "unphased" else phase
+            notify("item/started", threadId=thread, turnId=turn, startedAtMs=3, item={"type": "agentMessage", "id": item, "text": "", "phase": phase})
+            for delta in deltas:
                 notify("item/agentMessage/delta", threadId=thread, turnId=turn, itemId=item, delta=delta)
+            notify("item/completed", threadId=thread, turnId=turn, completedAtMs=4,
+                   item={"type": "agentMessage", "id": item, "text": "".join(deltas), "phase": phase})
         notify("item/completed", threadId="other-thread", turnId=turn, completedAtMs=4,
                item={**tool, "status": "failed"})
         notify("turn/completed", threadId=thread, turn={"id": turn, "items": [], "status": "completed"})

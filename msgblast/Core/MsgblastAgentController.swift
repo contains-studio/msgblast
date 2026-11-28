@@ -83,7 +83,9 @@ public final class MsgblastAgentController: ObservableObject {
     private func apply(_ event: MsgblastAgentEvent) -> Bool {
         switch event {
         case .text(let text):
-            if conversation.messages.last?.role == .agent { conversation.messages[conversation.messages.count - 1].text += text }
+            if let last = conversation.messages.last, last.role == .agent, last.stopped != true {
+                conversation.messages[conversation.messages.count - 1].text += text
+            }
             else { conversation.messages.append(MsgblastAgentMessage(role: .agent, text: text)) }
             return false
         case .tool(let name, let finished, _):
@@ -99,6 +101,7 @@ public final class MsgblastAgentController: ObservableObject {
     }
 
     private func finish(_ next: MsgblastAgentStatus) {
+        if stopping { conversation.messages.append(MsgblastAgentMessage(role: .agent, text: "Stopped", stopped: true)) }
         status = next
         stopping = false
         turn = nil
