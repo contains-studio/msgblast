@@ -64,7 +64,8 @@ final class RemoteProtocolCodingTests: XCTestCase {
             .attachStaged(uploadID: UUID(), sha256: Data(SHA256.hash(data: Data([1])))), .requestReport(conversationID: conversation),
             .prepareConversation(conversationID: nil, agentIDs: ["claude"]), .prepareConversation(conversationID: conversation, agentIDs: []), .queryCommand(clientCommandID: UUID()), .fetchAvatar(ref: "sha256:00ff"),
             .renameConversation(conversationID: conversation, title: "Pesto"), .fetchAttachment(turnID: "m:guid-1", index: 1, maxBytes: 200_000),
-            .chooseAction(conversationID: conversation, agentID: "alexaShopping", label: "Show more options", offerID: "reply-7")]
+            .chooseAction(conversationID: conversation, agentID: "alexaShopping", label: "Show more options", offerID: "reply-7"),
+            .sendToAgent(text: "Compare the two plans"), .stopAgent]
         for action in actions { try roundTrip(RemoteCommand(action: action)) }
         XCTAssertEqual(actions.filter(\.isSend).count, 4)
 
@@ -84,6 +85,30 @@ final class RemoteProtocolCodingTests: XCTestCase {
             .commandResult(RemoteCommandResult(clientCommandID: UUID(), outcome: .rejected, code: .notReady, agentReasons: ["claude": "Sign in to Claude."])),
             .ping(nonce: 7), .pong(nonce: 7, seq: 10), .error(RemoteErrorMessage(code: .notPaired, message: "Pair first."))]
         for message in messages { try roundTrip(message) }
+    }
+
+    func testAgentChatRoundTripsAndOlderPeersIgnoreIt() throws {
+        let message = RemoteAgentMessage(id: UUID(), fromPerson: false, text: "[Open the comparison](msgblast://comparison/\(UUID().uuidString)) 🧭")
+        let chat = RemoteAgentChat(account: "Claude Code", state: .working, line: "Sending…", messageIDs: [message.id], messages: [message])
+        try roundTrip(RemoteMessage.agent(chat))
+        let recorded = try RemoteProtocol.encoder().encode(RemoteClientDriver.Event.agent(chat))
+        guard case .agent(let replayed) = try RemoteProtocol.decoder().decode(RemoteClientDriver.Event.self, from: recorded) else { return XCTFail("Not an agent event") }
+        XCTAssertEqual(replayed, chat)
+        try roundTrip(RemoteAgentChat(account: nil, state: .failed, line: "Couldn't start", detail: "The CLI is missing.", messageIDs: [], messages: []))
+        let stopped = RemoteAgentMessage(id: UUID(), fromPerson: false, text: "Stopped", created: date, note: true)
+        try roundTrip(stopped)
+        // A message from a Mac without dates or notes still decodes, as a bubble with no time.
+        let plain = try RemoteProtocol.decoder().decode(RemoteAgentMessage.self, from: Data(#"{"id":"\#(UUID().uuidString)","fromPerson":false,"text":"Hi"}"#.utf8))
+        XCTAssertNil(plain.created)
+        XCTAssertNil(plain.note)
+        // A newer Mac's state stays readable, and is never mistaken for working.
+        let newer = try RemoteProtocol.decoder().decode(RemoteAgentChat.self, from: Data(#"{"state":"dreaming","messageIDs":[],"messages":[]}"#.utf8))
+        XCTAssertEqual(newer.state.rawValue, "dreaming")
+        XCTAssertNil(newer.account)
+        // What an older build sees: a message kind it does not know, which its client ignores.
+        let older = try RemoteProtocol.decoder().decode(RemoteMessage.self, from: Data(#"{"kind":"agentV9","payload":{}}"#.utf8))
+        XCTAssertEqual(older, .unknown(kind: "agentV9"))
+        XCTAssertFalse(RemoteAction.sendToAgent(text: "Hi").isSend, "Agent turns are checked on their own path, not as grid sends")
     }
 
     func testEmojiRoundTripByteForByte() throws {

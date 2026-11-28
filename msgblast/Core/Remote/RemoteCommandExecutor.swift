@@ -416,7 +416,7 @@ public final class RemoteCommandExecutor {
         case .acknowledgeIncomplete, .cancelNative, .setKeepAwake: return applyAgentCommand(command, host: host)
         case .uploadAttachmentChunk, .attachStaged: return applyAttachmentCommand(command, host: host)
         case .createConversation, .sendShared, .sendPrivate, .chooseAction, .prepareConversation, .queryCommand, .fetchAvatar, .fetchAttachment: return reject(command, .invalidCommand, "Handled separately.")
-        case .unknown(let kind): return reject(command, .unsupported, "Update msgblast on your Mac")
+        case .sendToAgent, .stopAgent, .unknown: return reject(command, .unsupported, "Update msgblast on your Mac")
         }
     }
 

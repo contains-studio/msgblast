@@ -16,6 +16,7 @@ public final class RemoteClientDriver {
         case snapshot(RemoteSnapshot)
         case events([RemoteEvent], latestSeq: UInt64)
         case commandResult(RemoteCommandResult)
+        case agent(RemoteAgentChat)
         case pong(nonce: UInt64, seq: UInt64)
         case error(RemoteErrorMessage)
     }
@@ -75,6 +76,7 @@ public final class RemoteClientDriver {
             sinceSeq = latest
             events.append(.events(list, latestSeq: latest))
         case .commandResult(let result): events.append(.commandResult(result))
+        case .agent(let chat): events.append(.agent(chat))
         case .pong(let nonce, let seq): events.append(.pong(nonce: nonce, seq: seq))
         case .error(let error): events.append(.error(error))
         case .pairChallenge, .pairComplete, .authenticated, .ping, .pairResponse, .authenticate, .subscribe, .command, .unknown: break
@@ -124,7 +126,7 @@ public final class RemoteClientDriver {
 
 /// Recorded client events (fixtures for the phone's reducer and the harness's `--record`).
 extension RemoteClientDriver.Event: Codable {
-    private enum CodingKeys: String, CodingKey { case kind, paired, macIdentityKey, deviceID, snapshot, events, latestSeq, result, nonce, seq, error }
+    private enum CodingKeys: String, CodingKey { case kind, paired, macIdentityKey, deviceID, snapshot, events, latestSeq, result, agent, nonce, seq, error }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(String.self, forKey: .kind) {
@@ -133,6 +135,7 @@ extension RemoteClientDriver.Event: Codable {
         case "snapshot": self = .snapshot(try c.decode(RemoteSnapshot.self, forKey: .snapshot))
         case "events": self = .events(try c.decode([RemoteEvent].self, forKey: .events), latestSeq: try c.decode(UInt64.self, forKey: .latestSeq))
         case "commandResult": self = .commandResult(try c.decode(RemoteCommandResult.self, forKey: .result))
+        case "agent": self = .agent(try c.decode(RemoteAgentChat.self, forKey: .agent))
         case "pong": self = .pong(nonce: try c.decode(UInt64.self, forKey: .nonce), seq: try c.decode(UInt64.self, forKey: .seq))
         case "error": self = .error(try c.decode(RemoteErrorMessage.self, forKey: .error))
         case let other: throw RemoteProtocolError.unexpectedMessage(other)
@@ -146,6 +149,7 @@ extension RemoteClientDriver.Event: Codable {
         case .snapshot(let snapshot): try c.encode("snapshot", forKey: .kind); try c.encode(snapshot, forKey: .snapshot)
         case .events(let events, let latest): try c.encode("events", forKey: .kind); try c.encode(events, forKey: .events); try c.encode(latest, forKey: .latestSeq)
         case .commandResult(let result): try c.encode("commandResult", forKey: .kind); try c.encode(result, forKey: .result)
+        case .agent(let chat): try c.encode("agent", forKey: .kind); try c.encode(chat, forKey: .agent)
         case .pong(let nonce, let seq): try c.encode("pong", forKey: .kind); try c.encode(nonce, forKey: .nonce); try c.encode(seq, forKey: .seq)
         case .error(let error): try c.encode("error", forKey: .kind); try c.encode(error, forKey: .error)
         }

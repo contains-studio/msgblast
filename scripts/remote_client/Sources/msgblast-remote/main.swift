@@ -164,6 +164,7 @@ final class Session: @unchecked Sendable {
         case .events(let events, let latest): showEvents(events, latest: latest)
         case .commandResult(let result): showCommandResult(result)
         case .pong(let nonce, let seq): print("pong \(nonce) seq \(seq)")
+        case .agent(let chat): print("agent \(chat.state.rawValue)\(chat.line.map { ": \($0)" } ?? "") · \(chat.messageIDs.count) messages")
         case .error(let error):
             print("Mac says \(error.code.rawValue): \(error.message)")
             if error.code != .macLocked { exit(3) }
