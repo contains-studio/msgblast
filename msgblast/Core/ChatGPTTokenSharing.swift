@@ -117,6 +117,7 @@ public enum ChatGPTTokenSharing {
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 20
         var allowed = CharacterSet.alphanumerics; allowed.insert(charactersIn: "-._~")
         request.httpBody = Data(form.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: allowed) ?? "")" }.joined(separator: "&").utf8)
         guard let (data, response) = try? await session.data(for: request), let http = response as? HTTPURLResponse else { return nil }
