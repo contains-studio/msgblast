@@ -20,10 +20,11 @@ final class CodexAgentSessionTests: XCTestCase {
         await session.close()
 
         let log = try requests(in: directory)
-        XCTAssertEqual(log[0]["argv"] as? [String], ["app-server", "-c", "model_provider=\"fixture\""])
-        XCTAssertEqual(log[0]["codexHome"] as? String, home.path)
-        XCTAssertEqual(log[0]["openAIKey"] as? Bool, false)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(log[0]["cwd"] as? String)))
+        let launch = try XCTUnwrap(log.first)
+        XCTAssertEqual(launch["argv"] as? [String], ["app-server", "-c", "model_provider=\"fixture\""])
+        XCTAssertEqual(launch["codexHome"] as? String, home.path)
+        XCTAssertEqual(launch["openAIKey"] as? Bool, false)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(launch["cwd"] as? String)))
         let start = try XCTUnwrap(log.first { $0["method"] as? String == "thread/start" }?["params"] as? [String: Any])
         XCTAssertEqual(start["approvalPolicy"] as? String, "never")
         XCTAssertEqual(start["sandbox"] as? String, "read-only")
@@ -128,8 +129,9 @@ final class CodexAgentSessionTests: XCTestCase {
     }
 
     private func codex(in directory: URL) throws -> InstalledPersonalAgent {
-        let url = try script("codex", "exec /usr/bin/python3 '\(fixture.path)' '\(directory.path)' \"$@\"", in: directory)
-        return InstalledPersonalAgent(provider: .codex, executableURL: url, path: "/usr/bin:/bin")
+        // Like the other Python fixtures, find python3 on the test's PATH; on CI /usr/bin/python3 is only an installer stub.
+        let url = try script("codex", "exec python3 '\(fixture.path)' '\(directory.path)' \"$@\"", in: directory)
+        return InstalledPersonalAgent(provider: .codex, executableURL: url, path: ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin")
     }
 
     private func script(_ name: String, _ body: String, in directory: URL) throws -> URL {
