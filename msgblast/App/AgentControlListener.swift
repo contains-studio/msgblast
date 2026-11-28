@@ -4,10 +4,16 @@ import msgblastCore
 
 /// The local socket outside agents on this Mac reach msgblast through (`msgblast` CLI, `msgblast mcp`).
 /// It lives in this build's support folder, so Dev, Demo and production never share one.
+/// It also listens while the built-in msgblast agent holds a live session key, then for keyed requests only.
 @MainActor final class AgentControlListener: ObservableObject {
     static let enabledKey = "agentControlEnabled"
     let socket: URL
     let gate: AgentControlGate
+    let sessionKeys = AgentSessionKeys()
+    /// The Outside agents switch.
+    private var outsideAgents: Bool
+    /// Counts switch-offs, so an outside agent's request that began before one is never answered.
+    private var switchOffs = 0
     @Published private(set) var error: String?
     private weak var host: AppModel?
     private var listener: NWListener?
@@ -21,19 +27,29 @@ import msgblastCore
         gate = AgentControlGate(file: directory.appendingPathComponent("outside-agents.json"))
         self.host = host
         sessions = AgentControlSessions { $0.cancel() }
-        if UserDefaults.standard.bool(forKey: Self.enabledKey) { start() }
+        outsideAgents = UserDefaults.standard.bool(forKey: Self.enabledKey)
+        sessionKeys.changed = { [weak self] in self?.update() }
+        update()
+        if enabled { tailnet.noteLocal(true) }
     }
 
     var enabled: Bool {
-        get { listener != nil }
+        get { outsideAgents && listener != nil }
         set {
             UserDefaults.standard.set(newValue, forKey: Self.enabledKey)
-            newValue ? start(byUser: true) : stop()
+            outsideAgents = newValue
+            if !newValue { switchOffs += 1 }
+            update()
+            tailnet.noteLocal(enabled, byUser: newValue)
             objectWillChange.send()
         }
     }
 
-    private func start(byUser: Bool = false) {
+    private func update() {
+        if outsideAgents || sessionKeys.hasLive { start() } else { stop() }
+    }
+
+    private func start() {
         guard listener == nil else { return }
         try? FileManager.default.removeItem(at: socket)
         let parameters = NWParameters.tcp
@@ -47,7 +63,7 @@ import msgblastCore
                     if case .ready = state {
                         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: self.socket.path)
                     }
-                    if case .failed(let failure) = state { self.error = failure.localizedDescription; self.stop() }
+                    if case .failed(let failure) = state { self.error = failure.localizedDescription; self.stop(); self.tailnet.noteLocal(false) }
                 }
             }
             listener.start(queue: .main)
@@ -55,7 +71,6 @@ import msgblastCore
             sessions.open()
             startObserving()
             error = gate.loadFailed ? "Saved outside-agent approvals could not be read, so every agent is refused." : nil
-            tailnet.noteLocal(true, byUser: byUser)
         } catch { self.error = error.localizedDescription }
     }
 
@@ -80,7 +95,6 @@ import msgblastCore
         listener = nil
         sessions.close()
         try? FileManager.default.removeItem(at: socket)
-        tailnet.noteLocal(false)
     }
 
     private func serve(_ connection: NWConnection) {
@@ -109,14 +123,17 @@ import msgblastCore
         }
     }
 
-    /// Answers one request. Nothing is answered once Outside agents is off, even a request that was
-    /// already running when it was switched off.
+    /// Answers one request. Nothing is answered for an outside agent once Outside agents is off, even a
+    /// request that was already running when it was switched off. The msgblast agent's key governs its own.
     private func answer(_ line: Data, on connection: NWConnection) async {
         guard sessions.contains(connection) else { return }
         guard let host else { return sessions.drop(connection) }
+        let keyed = AgentControlWire.hasSessionKey(line)
+        let began = switchOffs
+        let live: @MainActor () -> Bool = { self.sessions.contains(connection) && (keyed || self.switchOffs == began) }
         let reply = await AgentControlWire.respond(to: line, host: host, gate: gate, approve: { await approveOutsideAgent($0) },
-                                                   isLive: { sessions.contains(connection) })
-        guard sessions.contains(connection) else { return }
+                                                   sessionKeys: sessionKeys, outsideAgents: outsideAgents, isLive: live)
+        guard live() else { return sessions.drop(connection) }
         connection.send(content: reply, completion: .contentProcessed { [weak self] _ in
             Task { @MainActor in self?.sessions.finish(connection) }
         })

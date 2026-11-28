@@ -68,8 +68,19 @@ public enum AgentControlSend {
         }
     }
 
+    /// A Messages contact's id, connected (`messages:`) or not yet (`featured:`).
+    public static func isMessages(_ id: String) -> Bool { id.hasPrefix("messages:") || id.hasPrefix("featured:") }
+
     /// The executor command for one send tool call. Throws for arguments the executor would refuse anyway.
-    public static func command(_ tool: String, _ input: Input, id: UUID) throws -> RemoteCommand {
+    /// `agentsOnly` refuses Messages contacts, including a follow-up with no agents, which reaches every member.
+    public static func command(_ tool: String, _ input: Input, id: UUID, agentsOnly: Bool = false) throws -> RemoteCommand {
+        let ids = [input.agent].compactMap { $0 } + (input.agents ?? [])
+        if agentsOnly, let contact = ids.first(where: { isMessages($0) || remoteID($0).map(isMessages) == true }) {
+            throw AgentControlError.invalidArguments("\(contact) is a Messages contact. msgblast agent only messages AI agents.")
+        }
+        if agentsOnly, tool == "msgblast_blast_follow_up", input.agents?.isEmpty != false {
+            throw AgentControlError.invalidArguments("agents is required: list the AI agent ids to follow up with.")
+        }
         let action: RemoteAction
         switch tool {
         case "msgblast_blast_start":
