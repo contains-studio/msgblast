@@ -37,10 +37,10 @@ public final class MsgblastAgentController: ObservableObject {
     /// A session id belongs to one CLI, so a new account starts a new session.
     public func choose(_ account: MsgblastAgentAccount) async {
         guard loadError == nil, !isWorking, conversation.account != account else { return }
-        await closeRunner()
         conversation.account = account
         conversation.sessionID = nil
         save()
+        await closeRunner()
     }
 
     public func send(_ text: String) {
