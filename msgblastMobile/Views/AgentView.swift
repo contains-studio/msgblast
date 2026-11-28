@@ -114,7 +114,7 @@ struct AgentView: View {
     /// At most one line: the agent's step or failure, else what the Mac said about the last ask.
     private var statusLine: (text: String, detail: String?, failed: Bool)? {
         if !setUp && chat?.messages.isEmpty == false { return ("Set up the msgblast agent on your Mac", nil, false) }
-        if working { return (chat?.line ?? "Working…", nil, false) }
+        if working { return notice.map { ($0, nil, true) } ?? (chat?.line ?? "Working…", nil, false) }
         if let notice { return (notice, nil, true) }
         if chat?.state == .failed, let line = chat?.line { return (line, chat?.detail, true) }
         return nil
@@ -127,12 +127,13 @@ struct AgentView: View {
         notice = nil
         Task {
             notice = await app.askAgent(question)
-            if notice == nil { text = "" }
+            if notice == nil { text = ComposeSend.field(text, afterSending: question) }
             asking = false
         }
     }
 
     private func stop() {
+        notice = nil
         Task { notice = await app.stopAgent() }
     }
 }
@@ -147,9 +148,17 @@ struct AgentLinkTarget: Hashable {
 private struct AgentSubtitle: ViewModifier {
     @ObservedObject var app: MobileApp
     var account: String?
+    @State private var now = Date()
     func body(content: Content) -> some View {
         let state = app.store.projection.macLocked && app.connection.state.canSend ? MacConnectionState.macLocked : app.connection.state
-        let connection = state.navigationSubtitle(lastHeard: app.connection.lastHeard, reconnectingSince: app.connection.reconnectingSince, now: Date())
-        content.navigationSubtitle(connection ?? account.map { "\($0) on your Mac" } ?? "")
+        let connection = state.navigationSubtitle(lastHeard: app.connection.lastHeard, reconnectingSince: app.connection.reconnectingSince, now: now)
+        content
+            .navigationSubtitle(connection ?? account.map { "\($0) on your Mac" } ?? "")
+            .task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(5))
+                    now = Date()
+                }
+            }
     }
 }

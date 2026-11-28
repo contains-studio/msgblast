@@ -290,7 +290,10 @@ public final class MobileApp: ObservableObject {
 
     /// Stops the agent's turn on the Mac; the next agent update shows it stopped.
     public func stopAgent() async -> String? {
-        guard let result = try? await perform(.stopAgent) else { return "Not connected" }
+        let result: RemoteCommandResult
+        do { result = try await perform(.stopAgent) }
+        catch MobileConnectionError.unconfirmed { return "Unconfirmed · check your Mac" }
+        catch { return "Not connected" }
         return result.outcome == .applied ? nil : result.message ?? "Your Mac didn't stop the agent"
     }
 
