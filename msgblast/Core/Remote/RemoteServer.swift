@@ -69,6 +69,8 @@ final class RemoteServerSession {
     private var subscribed = false
     private var deliveredSeq: UInt64?
     private var lockNoticeSent = false
+    /// The msgblast agent update this session last sent; nil until it is sent in full.
+    private var deliveredAgent: RemoteAgentChat?
     private var timeout: Task<Void, Never>?
 
     init(connection: RemoteConnection, server: RemoteServer) {
@@ -176,6 +178,7 @@ final class RemoteServerSession {
         case (.authenticated, .subscribe(let since)):
             subscribed = true
             deliveredSeq = since
+            deliveredAgent = nil
             deliverBacklog()
         case (.authenticated, .command(let command)):
             server.executor.submit(command) { [weak self] result in self?.send(.commandResult(result)) }
@@ -226,6 +229,16 @@ final class RemoteServerSession {
             for part in snapshot.parts() { send(.snapshot(part)) }
         }
         deliveredSeq = server.journal.seq
+        deliverAgent()
+    }
+
+    /// The agent's state with only the messages that changed since the last update; nothing when nothing did.
+    func deliverAgent() {
+        guard subscribed, deviceID != nil, !server.isLocked(), !lockNoticeSent, let chat = server.agentChat?(), chat != deliveredAgent else { return }
+        var update = chat
+        if let sent = deliveredAgent?.messages { update.messages = chat.messages.filter { !sent.contains($0) } }
+        send(.agent(update))
+        deliveredAgent = chat
     }
 
     func push(_ events: [RemoteEvent]) {
@@ -263,6 +276,8 @@ public final class RemoteServer: ObservableObject {
     public var onClientChange: ((Bool) -> Void)?
     /// A new phone was stored (the first one, or a replacement). Reconnects do not call this.
     public var onPaired: (() -> Void)?
+    /// The msgblast agent's conversation and status, or nil when this Mac offers no agent.
+    public var agentChat: (() -> RemoteAgentChat?)?
 
     public init(identity: RemoteIdentity, pairing: RemotePairing, executor: RemoteCommandExecutor, journal: RemoteChangeJournal, variant: MacVariant,
                 macName: @escaping () -> String, isLocked: @escaping () -> Bool, refreshJournal: @escaping () -> Void) {
@@ -307,6 +322,9 @@ public final class RemoteServer: ObservableObject {
     }
 
     public func broadcast(_ events: [RemoteEvent]) { for session in sessions { session.push(events) } }
+
+    /// Sends the msgblast agent's changes to the phone.
+    public func agentChanged() { for session in sessions { session.deliverAgent() } }
 
     /// Called when the lock state changes; unlocking resumes from each client's cursor.
     public func lockStateChanged() { for session in sessions { session.deliverBacklog() } }

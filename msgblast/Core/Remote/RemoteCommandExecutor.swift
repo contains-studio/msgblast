@@ -128,6 +128,9 @@ public protocol RemoteCommandHost: AnyObject {
     /// One attachment of a projected turn, prepared for the phone; only files recorded on
     /// that turn are ever read.
     func attachment(turnID: String, index: Int, maxBytes: Int) -> RemoteAttachmentFetch
+    /// Starts a msgblast agent turn with the account chosen on the Mac, after the Mac's own agent checks.
+    func sendToAgent(_ text: String) -> RemoteHostResult
+    func stopAgent() async -> RemoteHostResult
 }
 
 /// What the Mac returns for `fetchAttachment`.
@@ -163,6 +166,8 @@ public extension RemoteCommandHost {
     func avatar(_ ref: String) -> Data? { nil }
     func renameConversation(_ id: UUID, title: String) -> RemoteHostResult { .rejected(.unsupported, "Update msgblast on your Mac") }
     func attachment(turnID: String, index: Int, maxBytes: Int) -> RemoteAttachmentFetch { .unavailable("This file is no longer on your Mac") }
+    func sendToAgent(_ text: String) -> RemoteHostResult { .rejected(.unsupported, "Update msgblast on your Mac") }
+    func stopAgent() async -> RemoteHostResult { .rejected(.unsupported, "Update msgblast on your Mac") }
 }
 
 /// Applies phone commands. Idempotent by `clientCommandID`: a replay returns the
@@ -416,8 +421,17 @@ public final class RemoteCommandExecutor {
         case .acknowledgeIncomplete, .cancelNative, .setKeepAwake: return applyAgentCommand(command, host: host)
         case .uploadAttachmentChunk, .attachStaged: return applyAttachmentCommand(command, host: host)
         case .createConversation, .sendShared, .sendPrivate, .chooseAction, .prepareConversation, .queryCommand, .fetchAvatar, .fetchAttachment: return reject(command, .invalidCommand, "Handled separately.")
-        case .sendToAgent, .stopAgent, .unknown: return reject(command, .unsupported, "Update msgblast on your Mac")
+        case .sendToAgent, .stopAgent: return await applyMsgblastAgentCommand(command, host: host)
+        case .unknown: return reject(command, .unsupported, "Update msgblast on your Mac")
         }
+    }
+
+    /// `apply` for the msgblast agent. A turn sends on its own, so it waits for no phone send and no Mac send.
+    private func applyMsgblastAgentCommand(_ command: RemoteCommand, host: any RemoteCommandHost) async -> RemoteCommandResult {
+        guard case .sendToAgent(let text) = command.action else { return outcome(command, await host.stopAgent()) }
+        guard !sending, !host.isBusy else { return reject(command, .macBusy, "Your Mac is busy. Try again soon") }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return reject(command, .invalidCommand, "Write a message first") }
+        return outcome(command, host.sendToAgent(text))
     }
 
     /// `apply` for ending, renaming, and reporting on a conversation.
