@@ -21,7 +21,7 @@ public struct ChatGPTRegistration: Codable, Equatable, Sendable {
 }
 
 public enum ChatGPTSignInError: LocalizedError, Equatable, Sendable {
-    case unavailable, declined, unverified, incomplete, codeExpired, differentAccount, signedOut, sharingOff, expired, notYet, rejectedClient, storage
+    case unavailable, declined, unverified, incomplete, codeExpired, differentAccount, signedOut, sharingOff, expired, notYet, rejectedClient, storage, storageUnavailable
     public var errorDescription: String? {
         switch self {
         case .unavailable: "ChatGPT sign-in is unavailable right now. Try again."
@@ -36,6 +36,7 @@ public enum ChatGPTSignInError: LocalizedError, Equatable, Sendable {
         case .notYet: "ChatGPT cannot renew this connection yet. Try again shortly."
         case .rejectedClient: "OpenAI rejected msgblast's registration. Connect again."
         case .storage: "The ChatGPT connection could not be read or saved securely."
+        case .storageUnavailable: "This copy of msgblast can’t save a ChatGPT connection. Sign in to Codex CLI above instead."
         }
     }
 }
