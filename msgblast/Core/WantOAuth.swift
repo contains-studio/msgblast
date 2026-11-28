@@ -252,15 +252,16 @@ public enum WantOAuth {
     }
 }
 
-/// The sign-in redirect: one GET to `http://127.0.0.1:<port>/callback` on loopback only. It answers
+/// The sign-in redirect: one GET to `http://127.0.0.1:<port><path>` on loopback only. It answers
 /// with a short page and hands back the URL; anything else gets 404.
 @MainActor public final class WantOAuthCallback {
+    private let path: String
     private var listener: NWListener?
     private var startup: CheckedContinuation<URL, Error>?
     private var waiter: CheckedContinuation<URL, Error>?
     private var stopped = false
     public private(set) var redirect: URL?
-    public init() {}
+    public init(path: String = "/callback") { self.path = path }
 
     public func start() async throws -> URL {
         guard !stopped else { throw CancellationError() }
@@ -275,7 +276,7 @@ public enum WantOAuth {
                 Task { @MainActor in
                     guard let self, let startup = self.startup else { return }
                     switch state {
-                    case .ready: self.startup = nil; startup.resume(returning: URL(string: "http://127.0.0.1:\(listener?.port?.rawValue ?? 0)/callback")!)
+                    case .ready: self.startup = nil; startup.resume(returning: URL(string: "http://127.0.0.1:\(listener?.port?.rawValue ?? 0)\(self.path)")!)
                     case .failed, .cancelled: self.startup = nil; startup.resume(throwing: CancellationError())
                     default: break
                     }
@@ -300,12 +301,13 @@ public enum WantOAuth {
     }
 
     private func accept(_ connection: NWConnection) {
+        let prefix = path + "?"
         connection.start(queue: .main)
         connection.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { [weak self] data, _, _, _ in
             Task { @MainActor in
                 let line = data.flatMap { String(data: $0, encoding: .utf8) }?.components(separatedBy: "\r\n").first ?? ""
                 let parts = line.split(separator: " ")
-                let found = parts.count == 3 && parts[0] == "GET" && parts[1].hasPrefix("/callback?")
+                let found = parts.count == 3 && parts[0] == "GET" && parts[1].hasPrefix(prefix)
                 let body = found ? "<!doctype html><title>msgblast</title><p style=\"font:16px -apple-system;margin:3em\">Signed in. You can close this tab and return to msgblast.</p>" : "Not found"
                 let head = "HTTP/1.1 \(found ? "200 OK" : "404 Not Found")\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n"
                 connection.send(content: Data((head + body).utf8), completion: .contentProcessed { _ in connection.cancel() })
