@@ -115,9 +115,10 @@ public struct AgentControlSnapshot: Equatable, Sendable {
 
     /// This look plus `next`'s counts and states for comparisons that joined the watched set
     /// but already existed at `date` (for example when a newer one ended): their history is
-    /// recorded, not announced. Comparisons created since then are compared from zero.
+    /// recorded, not announced. Comparisons created since then are compared from zero. A comparison
+    /// this look already saw, even before any agent in it had a reply count, is already watched.
     func adopting(_ next: Self, createdBefore date: Date) -> Self {
-        let watched = Set(replies.keys.map(\.comparisonID)).union(states.keys.map(\.comparisonID))
+        let watched = Set(created.keys).union(replies.keys.map(\.comparisonID)).union(states.keys.map(\.comparisonID))
         let joined = { (id: UUID) in !watched.contains(id) && (next.created[id] ?? .distantPast) < date }
         var base = self
         for (key, count) in next.replies where joined(key.comparisonID) { base.replies[key] = count }
