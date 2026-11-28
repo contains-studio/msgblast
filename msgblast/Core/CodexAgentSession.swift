@@ -28,7 +28,7 @@ public actor CodexAgentSession: MsgblastAgentRunner {
     private var process: Process?, group: pid_t?, input: FileHandle?, directory: URL?, launches = 0
     private var nextID = 0, pending: [Int: CheckedContinuation<Message, Error>] = [:], stderrTail = ""
     private var turn: AsyncStream<MsgblastAgentEvent>.Continuation?, turnNumber = 0, turnID: String?
-    private var interruptRequested = false, wroteText = false, closed = false, opening = false
+    private var interruptRequested = false, interruptSent = false, wroteText = false, closed = false, opening = false
 
     /// `codexHome` and `launchConfig` (extra `-c` overrides) select a managed login; without them Codex uses `codex login`.
     /// `sessionID` resumes a saved conversation.
@@ -47,7 +47,7 @@ public actor CodexAgentSession: MsgblastAgentRunner {
     public func interrupt() async {
         guard turn != nil else { return }
         interruptRequested = true
-        await sendInterrupt()
+        sendInterrupt()
     }
 
     public func close() async {
@@ -83,7 +83,7 @@ public actor CodexAgentSession: MsgblastAgentRunner {
         }
         turnNumber += 1
         let number = turnNumber
-        turn = continuation; turnID = nil; interruptRequested = false; wroteText = false
+        turn = continuation; turnID = nil; interruptRequested = false; interruptSent = false; wroteText = false
         do {
             if process == nil {
                 do { try await open() } catch { shutDown(nil); throw error }
@@ -94,7 +94,7 @@ public actor CodexAgentSession: MsgblastAgentRunner {
             let result = try await request("turn/start", ["threadId": threadID, "input": [["type": "text", "text": text]]])
             guard number == turnNumber, turn != nil else { return }
             turnID = turnID ?? (result.object["turn"] as? [String: Any])?["id"] as? String
-            if interruptRequested { await sendInterrupt() }
+            if interruptRequested { sendInterrupt() }
         } catch {
             if number == turnNumber { finishTurn(.failed(error.localizedDescription)) }
         }
@@ -228,7 +228,7 @@ public actor CodexAgentSession: MsgblastAgentRunner {
         switch method {
         case "turn/started":
             turnID = (params["turn"] as? [String: Any])?["id"] as? String
-            if interruptRequested { Task { await sendInterrupt() } }
+            if interruptRequested { sendInterrupt() }
         case "item/agentMessage/delta":
             guard let delta = params["delta"] as? String else { return }
             wroteText = true
@@ -246,9 +246,11 @@ public actor CodexAgentSession: MsgblastAgentRunner {
         }
     }
 
-    private func sendInterrupt() async {
-        guard let threadID, let turnID else { return }
-        _ = try? await request("turn/interrupt", ["threadId": threadID, "turnId": turnID])
+    /// Asks Codex once per turn to stop. The turn still ends with `turn/completed`, so the answer isn't awaited.
+    private func sendInterrupt() {
+        guard !interruptSent, let threadID, let turnID else { return }
+        interruptSent = true
+        Task { _ = try? await request("turn/interrupt", ["threadId": threadID, "turnId": turnID]) }
     }
 
     private func finishTurn(_ event: MsgblastAgentEvent) {

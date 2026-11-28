@@ -60,6 +60,7 @@ while True:
                                                              "error": {"message": "Usage limit reached."}})
             continue
         if text == "wait":
+            notify("item/agentMessage/delta", threadId=thread, turnId=turn, itemId="message-wait", delta="Waiting")
             interrupt = read()
             send({"id": interrupt["id"], "result": {}})
             notify("turn/completed", threadId=thread, turn={"id": turn, "items": [], "status": "interrupted"})
