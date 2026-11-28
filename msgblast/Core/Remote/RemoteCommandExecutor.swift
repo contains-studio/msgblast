@@ -421,14 +421,17 @@ public final class RemoteCommandExecutor {
         case .acknowledgeIncomplete, .cancelNative, .setKeepAwake: return applyAgentCommand(command, host: host)
         case .uploadAttachmentChunk, .attachStaged: return applyAttachmentCommand(command, host: host)
         case .createConversation, .sendShared, .sendPrivate, .chooseAction, .prepareConversation, .queryCommand, .fetchAvatar, .fetchAttachment: return reject(command, .invalidCommand, "Handled separately.")
-        case .sendToAgent(let text):
-            // The turn sends on its own; it waits for no phone send and no Mac send.
-            guard !sending, !host.isBusy else { return reject(command, .macBusy, "Your Mac is busy. Try again soon") }
-            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return reject(command, .invalidCommand, "Write a message first") }
-            return outcome(command, host.sendToAgent(text))
-        case .stopAgent: return outcome(command, await host.stopAgent())
+        case .sendToAgent, .stopAgent: return await applyMsgblastAgentCommand(command, host: host)
         case .unknown: return reject(command, .unsupported, "Update msgblast on your Mac")
         }
+    }
+
+    /// `apply` for the msgblast agent. A turn sends on its own, so it waits for no phone send and no Mac send.
+    private func applyMsgblastAgentCommand(_ command: RemoteCommand, host: any RemoteCommandHost) async -> RemoteCommandResult {
+        guard case .sendToAgent(let text) = command.action else { return outcome(command, await host.stopAgent()) }
+        guard !sending, !host.isBusy else { return reject(command, .macBusy, "Your Mac is busy. Try again soon") }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return reject(command, .invalidCommand, "Write a message first") }
+        return outcome(command, host.sendToAgent(text))
     }
 
     /// `apply` for ending, renaming, and reporting on a conversation.
