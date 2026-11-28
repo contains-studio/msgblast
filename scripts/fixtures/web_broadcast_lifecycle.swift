@@ -12,6 +12,7 @@ import Combine
     var error: String?
     let personalAgent = FakePersonalAgent()
     let webAgents = FakeWebAgents()
+    let msgblastAgent = FakeMsgblastAgent()
     func saveForTermination() throws {
         if failSave { throw NSError(domain: "IsolatedStateStorage", code: 1) }
     }
@@ -30,6 +31,10 @@ import Combine
     func beginShutdown() { shutdownStarted = true }
     func cancelAndWait() async {}
 }
+@MainActor final class FakeMsgblastAgent {
+    var closed = false
+    func close() async { closed = true }
+}
 @MainActor final class FakePersonalAgent {
     let running: Set<UUID> = []
     func beginShutdown() {}
@@ -46,7 +51,7 @@ import Combine
             precondition(lifecycle.applicationShouldTerminate(application) == .terminateLater,
                          "Idle Quit must wait for embedded runtime cleanup")
             for _ in 0..<50 where reply == nil { try await Task.sleep(for: .milliseconds(10)) }
-            precondition(reply == true && model.webAgents.shutdownStarted)
+            precondition(reply == true && model.webAgents.shutdownStarted && model.msgblastAgent.closed)
             do {
                 _ = try await EmbeddedCuaDriver.shared.connection()
                 preconditionFailure("Quit approved before stopping embedded app control")

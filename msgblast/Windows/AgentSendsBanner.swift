@@ -2,11 +2,12 @@ import SwiftUI
 import msgblastCore
 
 /// Above the agents workspace while an outside agent's send runs, with Stop, and while sends are stopped.
+/// The msgblast agent bar shows the built-in agent's own sends instead.
 struct AgentSendsBanner: View {
     @ObservedObject var activity: AgentControlActivity
 
     var body: some View {
-        if let running = activity.log.running {
+        if let running = activity.log.running, running.client != MsgblastAgent.clientName {
             HStack {
                 ProgressView().controlSize(.small)
                 Text("Sending for an outside agent: \(running.summary)")
