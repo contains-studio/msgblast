@@ -100,8 +100,9 @@ public enum ChatGPTTokenSharing {
         return server
     }
 
-    static func keys(_ server: Server, session: URLSession) async throws -> ChatGPTIDToken.KeySet {
-        guard let (data, response) = try? await session.data(from: server.jwksUri), (response as? HTTPURLResponse)?.statusCode == 200,
+    static func keys(_ server: Server, session: URLSession, reload: Bool = false) async throws -> ChatGPTIDToken.KeySet {
+        let request = URLRequest(url: server.jwksUri, cachePolicy: reload ? .reloadIgnoringLocalCacheData : .useProtocolCachePolicy)
+        guard let (data, response) = try? await session.data(for: request), (response as? HTTPURLResponse)?.statusCode == 200,
               let keys = try? JSONDecoder().decode(ChatGPTIDToken.KeySet.self, from: data) else { throw ChatGPTSignInError.unavailable }
         return keys
     }

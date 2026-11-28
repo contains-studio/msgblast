@@ -44,8 +44,8 @@ public actor ChatGPTAccounts {
         guard let (status, json) = await ChatGPTTokenSharing.post(server.tokenEndpoint, form, session: session) else { throw ChatGPTSignInError.unavailable }
         guard status == 200 else {
             if json["error"] as? String == "invalid_grant" {
-                // Keep a newly issued client id, so the next sign-in reuses it.
-                if saved == nil { try save(ChatGPTRegistration(clientID: clientID)) }
+                // Keep a newly issued client id for a first sign-in, so the next one reuses it.
+                if saved == nil, try index().active == nil { try save(ChatGPTRegistration(clientID: clientID)) }
                 throw ChatGPTSignInError.codeExpired
             }
             throw json["error"] as? String == "invalid_client" ? ChatGPTSignInError.rejectedClient : .incomplete
@@ -61,7 +61,7 @@ public actor ChatGPTAccounts {
 
     private func verify(_ idToken: String, clientID: String, nonce: String, server: ChatGPTTokenSharing.Server) async throws -> ChatGPTIDToken.Identity {
         var keys = try await ChatGPTTokenSharing.keys(server, session: session)
-        if ChatGPTIDToken.needsNewKeys(idToken, keys: keys) { keys = try await ChatGPTTokenSharing.keys(server, session: session) }
+        if ChatGPTIDToken.needsNewKeys(idToken, keys: keys) { keys = try await ChatGPTTokenSharing.keys(server, session: session, reload: true) }
         guard let identity = try? ChatGPTIDToken.verify(idToken, keys: keys, issuer: server.issuer, audience: clientID, nonce: nonce, now: now())
         else { throw ChatGPTSignInError.unverified }
         return identity
