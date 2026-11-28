@@ -276,6 +276,23 @@ final class AppRemoteHost: RemoteCommandHost {
         return .applied(message: "Stopped waiting. A reply may still arrive")
     }
 
+    /// The same checks as the Mac's bar, plus Stop Agent Sends, which would refuse every send the turn makes.
+    func sendToAgent(_ text: String) -> RemoteHostResult {
+        let agent = model.msgblastAgent
+        guard !model.agentSendActivity.stopped else { return .rejected(.agentSendsStopped, "Agent sends are stopped on your Mac") }
+        if let error = agent.loadError { return .rejected(.failed, error) }
+        guard agent.conversation.account != nil else { return .rejected(.agentUnavailable, "Set up the msgblast agent on your Mac") }
+        guard !agent.isWorking else { return .rejected(.macBusy, "The msgblast agent is still working") }
+        agent.send(text)
+        if case .failed(let message) = agent.status { return .rejected(.failed, message) }
+        return agent.isWorking ? .applied(message: "Asked the msgblast agent") : .rejected(.failed, "The msgblast agent didn't start")
+    }
+
+    func stopAgent() async -> RemoteHostResult {
+        await model.msgblastAgent.stop()
+        return .applied()
+    }
+
     func setKeepAwake(_ enabled: Bool) -> RemoteHostResult {
         keepAwake.setClientRequested(enabled) ? .applied() : .rejected(.keepAwakeDisabled, "Keep awake is off on your Mac")
     }

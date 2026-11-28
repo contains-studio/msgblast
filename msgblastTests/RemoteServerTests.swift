@@ -280,6 +280,53 @@ final class RemoteServerTests: XCTestCase {
         XCTAssertEqual(kinds.filter { $0 == "macStatus" }.count, 2)
     }
 
+    func testTheAgentArrivesInFullThenOnlyItsChangesAndNothingWhileLocked() async throws {
+        let (server, _, _) = try makeServer()
+        let question = RemoteAgentMessage(id: UUID(), fromPerson: true, text: "Compare plans")
+        var reply = RemoteAgentMessage(id: UUID(), fromPerson: false, text: "Sub")
+        var chat = RemoteAgentChat(account: "Claude Code", state: .working, line: "Sending…", messageIDs: [question.id, reply.id], messages: [question, reply])
+        server.agentChat = { chat }
+        let key = P256.Signing.PrivateKey()
+        let offer = try server.pairing.openOffer(macName: "Studio", variant: .demo, endpoints: [], port: 1, identity: server.identity)
+        let phone = connect(server, .pair(offer: offer, deviceName: "Phone", deviceKey: key))
+        func updates(_ phone: TestPhone) -> [RemoteAgentChat] { phone.events.compactMap { if case .agent(let chat) = $0 { chat } else { nil } } }
+        await settle { !updates(phone).isEmpty }
+        XCTAssertEqual(updates(phone), [chat], "The first update after a subscribe lists every message")
+
+        server.agentChanged()
+        reply.text = "Submitted to Claude."
+        chat.messages = [question, reply]
+        server.agentChanged()
+        await settle { updates(phone).count == 2 }
+        XCTAssertEqual(updates(phone).last?.messages, [reply], "Only the message that changed, and nothing for no change")
+        XCTAssertEqual(updates(phone).last?.messageIDs, [question.id, reply.id])
+
+        locked = true
+        chat.state = .idle
+        server.agentChanged()
+        locked = false
+        server.lockStateChanged()
+        await settle { updates(phone).count == 3 }
+        XCTAssertEqual(updates(phone).map(\.state), [.working, .working, .idle], "Held while locked, sent on unlock")
+        XCTAssertEqual(updates(phone).last?.messages, [])
+
+        let (paired, macKey) = try XCTUnwrap(phone.paired)
+        let again = connect(server, .resume(deviceID: paired.deviceID, deviceKey: key, macIdentityKey: macKey))
+        await settle { !updates(again).isEmpty }
+        XCTAssertEqual(updates(again).first?.messages, [question, reply], "A new session starts in full")
+    }
+
+    func testAMacWithoutTheAgentSendsNoAgentUpdates() async throws {
+        let (server, _, _) = try makeServer()
+        let offer = try server.pairing.openOffer(macName: "Studio", variant: .demo, endpoints: [], port: 1, identity: server.identity)
+        let phone = connect(server, .pair(offer: offer, deviceName: "Phone", deviceKey: P256.Signing.PrivateKey()))
+        await settle { !phone.snapshots.isEmpty }
+        server.agentChanged()
+        phone.send(.ping(nonce: 1))
+        await settle { phone.events.contains { if case .pong = $0 { true } else { false } } }
+        XCTAssertFalse(phone.events.contains { if case .agent = $0 { true } else { false } })
+    }
+
     func testReconnectReplacesTheOlderConnection() async throws {
         let (server, _, _) = try makeServer()
         let key = P256.Signing.PrivateKey()
