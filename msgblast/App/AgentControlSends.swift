@@ -43,10 +43,11 @@ import msgblastRemoteProtocol
             guard isAuthorized() else { return .rejected(id, .invalidCommand, "The account or send selection changed.") }
             return await self.executor.execute(command)
         }
-        // The person asked the msgblast agent, so show the comparison its blast or follow-up went to.
-        if client == MsgblastAgent.clientName, result.outcome == .applied, let comparison = result.conversationID {
+        // The person asked the msgblast agent, so note who it sent to and show the comparison its blast or follow-up went to.
+        if client == MsgblastAgent.clientName, result.outcome == .applied {
+            model.noteAgentSend(command.action, comparison: result.conversationID)
             switch command.action {
-            case .createConversation, .sendShared: model.showAgentComparison(comparison)
+            case .createConversation, .sendShared: result.conversationID.map(model.showAgentComparison)
             default: break
             }
         }
@@ -55,6 +56,20 @@ import msgblastRemoteProtocol
 }
 
 extension AppModel {
+    /// Adds "Sent to Codex CLI and Claude Code" to the msgblast agent's conversation for one of its sends.
+    func noteAgentSend(_ action: RemoteAction, comparison: UUID?) {
+        let ids: [String]
+        switch action {
+        case .createConversation(_, let agents, _): ids = agents
+        case .sendShared(_, _, let agents, _):
+            ids = agents.isEmpty ? (comparison.flatMap(self.comparison)?.resolvedWebAgentIDs.map(\.id) ?? []) : agents
+        case .sendPrivate(_, let agent, _, _): ids = [agent]
+        default: return
+        }
+        let names = ids.compactMap { id in webAgents.sessions.first { $0.id.id == id || $0.id.gridID.id == id }?.name }
+        guard !names.isEmpty else { return }
+        msgblastAgent.note("Sent to \(names.formatted(.list(type: .and)))")
+    }
     func controlSend(_ command: RemoteCommand, client: String) async -> RemoteCommandResult { await agentSends.send(command, client: client) }
     func controlSendStatus(_ id: UUID) -> RemoteCommandResult { agentSends.executor.status(of: id) }
 }

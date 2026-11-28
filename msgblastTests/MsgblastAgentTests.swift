@@ -110,6 +110,29 @@ final class MsgblastAgentTests: XCTestCase {
         XCTAssertGreaterThan(nested?.firstLineHeadIndent ?? 0, 0)
     }
 
+    func testComparisonLinksBecomeCardsAndAgentLinksStay() {
+        let first = UUID(), second = UUID()
+        let reply = """
+        They agree on clarity.
+
+        - **[Codex CLI](msgblast://comparison/\(first.uuidString)?agent=web:codexCLI)** replied.
+
+        [Open the comparison](msgblast://comparison/\(first.uuidString)) · Demo, simulated replies.
+        See also msgblast://comparison/\(second.uuidString)
+        msgblast://comparison/\(first.uuidString)
+        """
+        let parts = MsgblastAgentText.comparisonCards(in: reply)
+        XCTAssertEqual(parts.comparisons, [first, second])
+        XCTAssertEqual(parts.text, """
+        They agree on clarity.
+
+        - **[Codex CLI](msgblast://comparison/\(first.uuidString)?agent=web:codexCLI)** replied.
+
+        Demo, simulated replies.
+        See also
+        """)
+    }
+
     func testDemoScriptLinksTheComparisonAndCompletes() {
         let id = UUID()
         let script = DemoAgentRunner(agents: [.init(id: "web:chatgpt", name: "ChatGPT"), .init(id: "web:claude", name: "Claude")], comparisonID: id).script
