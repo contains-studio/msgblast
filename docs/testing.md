@@ -62,6 +62,7 @@ Sparkle package artifact. From the repository root:
 ```sh
 bash scripts/test_web_comparisons.sh build/contributor-tests
 bash scripts/test_configured_cli_conversations.sh build/contributor-tests
+bash scripts/test_claude_agent_session.sh build/contributor-tests
 bash scripts/test_personal_agent_shutdown.sh build/contributor-tests
 bash scripts/test_crash_reporting.sh build/contributor-tests
 ```
@@ -79,6 +80,10 @@ bash scripts/test_crash_reporting.sh build/contributor-tests
 - Configured CLI fixtures invoke the real adapter with a deterministic local
   executable and temporary configuration. They test new/resumed sessions,
   configuration transport, denied writes, restricted reports, and legacy history.
+- The msgblast agent Claude fixture drives the actual `ClaudeAgentSession` with a
+  stand-in that checks its arguments, MCP config file and environment, then
+  replays recorded stream-json: a streamed turn with a tool call, interrupt,
+  resume, refusal of non-msgblast tools, the idle limit and close cleanup.
 - Report fixtures exercise the actual controller with lifecycle/storage
   substitutes, including delayed discovery, shutdown, and persistence.
 
