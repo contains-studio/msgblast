@@ -188,7 +188,9 @@ the `.xcresult` bundles, logs and failing-test details as
 Debug builds of the phone app open on simulated screens without pairing or any
 network when `MSGBLAST_FIXTURE` is set: `inbox`, `conversation`, `conversation-short`, `conversation-pinned`,
 `conversation-many`, `typing`, `incomplete`,
-`blocked`, `new`, `settings`, `reconnecting`, `locked`, `pairing` or `pairing-paste`. The fake Mac is
+`blocked`, `new`, `settings`, `reconnecting`, `locked`, `pairing`, `pairing-paste`, or the
+msgblast agent's `agent`, `agent-working`, `agent-failed` and `agent-setup`; a
+`-MSGBLAST_FIXTURE <name>` launch argument works too, for launchers that pass no environment. The fake Mac is
 named "Studio Mac"; the data is built in `msgblastMobile/Debug/DesignFixtures.swift`
 and compiles out of Release. `MSGBLAST_FIXTURE_CONVERSATION=<uuid>` opens a
 particular conversation, and `MSGBLAST_FIXTURE_DRAFT=<text>` pre-fills its composer so

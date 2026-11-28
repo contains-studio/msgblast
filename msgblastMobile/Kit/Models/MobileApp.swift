@@ -276,6 +276,27 @@ public final class MobileApp: ObservableObject {
         }
     }
 
+    /// Asks the Mac's msgblast agent. Nil once the Mac started the turn, else the line to show.
+    /// Like every send it is never resent: a lost answer stays unconfirmed.
+    public func askAgent(_ text: String) async -> String? {
+        let result: RemoteCommandResult
+        do { result = try await perform(.sendToAgent(text: text)) }
+        catch MobileConnectionError.unconfirmed { return "Unconfirmed · check your Mac" }
+        catch { return "Not connected" }
+        if result.outcome == .applied { return nil }
+        if result.code == .unsupported { unsupportedActions.insert("sendToAgent") }
+        return result.message ?? "Your Mac didn't start the agent"
+    }
+
+    /// Stops the agent's turn on the Mac; the next agent update shows it stopped.
+    public func stopAgent() async -> String? {
+        guard let result = try? await perform(.stopAgent) else { return "Not connected" }
+        return result.outcome == .applied ? nil : result.message ?? "Your Mac didn't stop the agent"
+    }
+
+    /// The Mac has the agent: it sent its conversation and never refused it as unsupported.
+    public var agentAvailable: Bool { store.agentChat != nil && !unsupportedActions.contains("sendToAgent") }
+
     /// Splits a file into protocol-sized chunks, uploads it, and returns the Mac's attachment id.
     public func upload(_ data: Data, filename: String) async throws -> String {
         guard data.count <= RemoteProtocol.maximumAttachmentBytes else { throw RemotePairingError(message: "Files are limited to 25 MB") }

@@ -337,6 +337,14 @@ connection, the local cache and the screen presenters, so its tests run on macOS
   with Messages contacts apart, the status subtitle, and Settings (Mac name, key
   fingerprint, status and route, Keep Mac Awake, Forget This Mac). Every screen
   follows one rule: a short line to glance at, the Mac's full text on demand.
+- **msgblast agent:** a sparkles button at the leading end of the inbox's bottom bar, where
+  Mail puts its filter, opens the agent's conversation. It shows only once the Mac sent the
+  agent (older Macs never do) and pulses while the agent works. The screen shows the cached
+  conversation first, your questions in blue and the agent's replies as text, the account as
+  the subtitle ("Claude Code on your Mac"), one status line (the step with Stop, or what went
+  wrong with ⓘ), and "Ask msgblast agent…". Without an account it says "Set up the msgblast
+  agent on your Mac". A summary link opens that comparison's thread, focused on the agent it
+  names. An ask that gets no answer is "Unconfirmed · check your Mac" and is never resent.
 - **Compose bar after a refused prepare:** the Mac's reason stays above the
   composer with a "Try Again" button, and Send stays enabled: tapping it prepares
   again and sends only if that succeeds; if it fails again the reason updates. The
@@ -363,7 +371,9 @@ own Tailscale or LAN address. Nothing real is sent.
    xcrun simctl launch booted com.msgblast.ios -pairLink "$(pbpaste)"
    ```
    `-pairLink` opens the pairing confirmation at launch (the simulator has no camera);
-   pasting the link into the pairing screen works too.
+   pasting the link into the pairing screen works too. `MSGBLAST_REMOTE_MAC_NAME="Demo Mac"`
+   replaces the computer's name in the pairing link, for evidence, and
+   `MSGBLAST_REMOTE_AGENT_FILE=<path>` chooses the Demo agent's account once that file exists.
 4. Confirm the Mac name and key and choose Pair. The inbox, conversations and agent
    grid then follow the Demo Mac live; the Demo replies to Messages sends after
    about two seconds.

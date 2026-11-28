@@ -35,6 +35,7 @@ public enum CommandLedger {
         case .endConversation(let id), .requestReport(let id): conversation = id
         case .acknowledgeIncomplete(let agent, _), .cancelNative(let agent): agents = [agent]
         case .prepareConversation(let id, let a): conversation = id; agents = a
+        case .sendToAgent(let t): text = t
         default: break
         }
         return CommandRecord(id: command.clientCommandID, kind: command.action.kind, conversationID: conversation, agentIDs: agents, text: text, sentAt: date, status: .sending)

@@ -31,7 +31,10 @@ struct MessageField: UIViewRepresentable {
         label.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(label)
         let leading = label.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: leadingInset)
-        NSLayoutConstraint.activate([leading, label.topAnchor.constraint(equalTo: view.topAnchor, constant: Space.gap)])
+        // A long placeholder at large text sizes truncates inside the field instead of running past it.
+        label.lineBreakMode = .byTruncatingTail
+        NSLayoutConstraint.activate([leading, label.topAnchor.constraint(equalTo: view.topAnchor, constant: Space.gap),
+                                     label.trailingAnchor.constraint(lessThanOrEqualTo: view.frameLayoutGuide.trailingAnchor, constant: -Space.tight)])
         context.coordinator.placeholder = label
         context.coordinator.placeholderLeading = leading
         view.accessibilityLabel = placeholder

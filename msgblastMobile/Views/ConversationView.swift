@@ -7,6 +7,8 @@ struct ConversationView: View {
     let conversationID: UUID
     /// The keyboard stays up when a new conversation becomes this thread.
     var startFocused = false
+    /// Opens on one agent's replies, as a msgblast agent link that names it asks.
+    var focusAgent: String? = nil
     /// The header cluster's selection, both the thread's filter and its recipients: empty is
     /// All, one agent is that agent's private thread, several are their union.
     @State private var selection: Set<String> = []
@@ -104,6 +106,7 @@ struct ConversationView: View {
         .onAppear {
             app.store.markOpened(conversationID)
             if startFocused { focusRequest += 1 }
+            if let focusAgent, app.store.projection.conversations[conversationID]?.agentIDs.contains(focusAgent) == true { selection = [focusAgent] }
             applyDesignFixtures()
         }
         // Reply mode narrows the selection to that agent and restores it after.
