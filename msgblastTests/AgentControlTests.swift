@@ -248,6 +248,28 @@ import XCTest
         XCTAssertEqual(feed.cursor, 3)
     }
 
+    /// A CLI agent can reply before the next look, so a comparison first seen with no replies must
+    /// still announce every reply that follows.
+    func testRepliesInAComparisonFirstSeenEmptyAreAllAnnounced() {
+        let feed = AgentControlEvents()
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        var look = AgentControlSnapshot()
+        feed.observe(look, date: start)
+        let blast = UUID()
+        look.created = [blast: start.addingTimeInterval(0.5)]
+        feed.observe(look, date: start.addingTimeInterval(1))
+        XCTAssertEqual(feed.events, [])
+        let codex = AgentControlSnapshot.Key(comparisonID: blast, agent: "Codex CLI")
+        let claude = AgentControlSnapshot.Key(comparisonID: blast, agent: "Claude Code")
+        look.replies = [codex: 1, claude: 0]
+        feed.observe(look, date: start.addingTimeInterval(2))
+        look.replies[claude] = 1
+        feed.observe(look, date: start.addingTimeInterval(3))
+        XCTAssertEqual(feed.events.map(\.kind), [.replyArrived, .replyArrived])
+        XCTAssertEqual(feed.events.map(\.agent), ["Codex CLI", "Claude Code"])
+        XCTAssertEqual(Set(feed.events.map(\.comparisonID)), [blast])
+    }
+
     func testFeedKeepsOnlyRecentEvents() {
         let feed = AgentControlEvents()
         for _ in 0..<(AgentControlEvents.retained + 5) { feed.publish(.agentBusy) }
