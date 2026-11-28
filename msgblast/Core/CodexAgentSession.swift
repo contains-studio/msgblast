@@ -28,7 +28,7 @@ public actor CodexAgentSession: MsgblastAgentRunner {
     private var process: Process?, group: pid_t?, input: FileHandle?, directory: URL?, launches = 0
     private var nextID = 0, pending: [Int: CheckedContinuation<Message, Error>] = [:], stderrTail = ""
     private var turn: AsyncStream<MsgblastAgentEvent>.Continuation?, turnNumber = 0, turnID: String?
-    private var interruptRequested = false, wroteText = false, closed = false, opening = false
+    private var interruptRequested = false, interruptSent = false, wroteText = false, closed = false, opening = false
     /// Codex sends progress notes and the answer as separate messages. Each is held until it completes:
     /// commentary is dropped, an answer is shown, and a message without a phase is kept only if it comes last.
     private var drafts: [String: String] = [:], lastDraft: String?, unphased: String?
@@ -86,7 +86,7 @@ public actor CodexAgentSession: MsgblastAgentRunner {
         }
         turnNumber += 1
         let number = turnNumber
-        turn = continuation; turnID = nil; interruptRequested = false; wroteText = false
+        turn = continuation; turnID = nil; interruptRequested = false; interruptSent = false; wroteText = false
         drafts = [:]; lastDraft = nil; unphased = nil
         do {
             if process == nil {
@@ -266,8 +266,10 @@ public actor CodexAgentSession: MsgblastAgentRunner {
         turn?.yield(.text(text))
     }
 
+    /// Sent once per turn: Stop, the start reply and `turn/started` can each be the first to know the turn.
     private func sendInterrupt() async {
-        guard let threadID, let turnID else { return }
+        guard let threadID, let turnID, !interruptSent else { return }
+        interruptSent = true
         _ = try? await request("turn/interrupt", ["threadId": threadID, "turnId": turnID])
     }
 
