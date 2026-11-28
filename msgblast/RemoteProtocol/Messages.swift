@@ -98,6 +98,8 @@ public enum RemoteMessage: Codable, Hashable, Sendable {
     case events(events: [RemoteEvent], latestSeq: UInt64)
     case command(RemoteCommand)
     case commandResult(RemoteCommandResult)
+    /// The msgblast agent's conversation and status (Mac to phone). Older phones ignore it.
+    case agent(RemoteAgentChat)
     case ping(nonce: UInt64)
     case pong(nonce: UInt64, seq: UInt64)
     case error(RemoteErrorMessage)
@@ -108,6 +110,7 @@ public enum RemoteMessage: Codable, Hashable, Sendable {
         case .pairChallenge: "pairChallenge"; case .pairResponse: "pairResponse"; case .pairComplete: "pairComplete"
         case .authenticate: "authenticate"; case .authenticated: "authenticated"; case .subscribe: "subscribe"
         case .snapshot: "snapshot"; case .events: "events"; case .command: "command"; case .commandResult: "commandResult"
+        case .agent: "agent"
         case .ping: "ping"; case .pong: "pong"; case .error: "error"; case .unknown(let kind): kind
         }
     }
@@ -143,6 +146,7 @@ public enum RemoteMessage: Codable, Hashable, Sendable {
         case "ping": return .ping(nonce: try c.decode(UInt64.self, forKey: .nonce))
         case "pong": return .pong(nonce: try c.decode(UInt64.self, forKey: .nonce), seq: try c.decode(UInt64.self, forKey: .seq))
         case "error": return .error(try c.decode(RemoteErrorMessage.self, forKey: .payload))
+        case "agent": return .agent(try c.decode(RemoteAgentChat.self, forKey: .payload))
         default: return .unknown(kind: kind)
         }
     }
@@ -152,7 +156,7 @@ public enum RemoteMessage: Codable, Hashable, Sendable {
         switch self {
         case .pairChallenge, .pairResponse, .pairComplete, .authenticate, .authenticated, .subscribe, .snapshot:
             try encodeSessionFields(into: &c)
-        case .events, .command, .commandResult, .ping, .pong, .error, .unknown:
+        case .events, .command, .commandResult, .agent, .ping, .pong, .error, .unknown:
             try encodeTrafficFields(into: &c)
         }
     }
@@ -176,6 +180,7 @@ public enum RemoteMessage: Codable, Hashable, Sendable {
         case .ping(let nonce): try c.encode(nonce, forKey: .nonce)
         case .pong(let nonce, let seq): try c.encode(nonce, forKey: .nonce); try c.encode(seq, forKey: .seq)
         case .error(let v): try c.encode(v, forKey: .payload)
+        case .agent(let v): try c.encode(v, forKey: .payload)
         default: break
         }
     }

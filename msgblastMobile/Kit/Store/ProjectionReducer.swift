@@ -87,7 +87,7 @@ public enum ProjectionReducer {
             receive(error, into: &next)
         case .paired, .authenticated:
             next.pairingLost = nil
-        case .commandResult, .pong:
+        case .commandResult, .agent, .pong:
             break
         }
         return next
