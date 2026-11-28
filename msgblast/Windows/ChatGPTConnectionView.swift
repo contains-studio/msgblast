@@ -8,10 +8,22 @@ struct ChatGPTConnectionView: View {
     private static let icon = Bundle.main.url(forResource: "chatgpt.jpg", withExtension: nil, subdirectory: "WebAgentIcons").flatMap(NSImage.init(contentsOf:))
 
     private var detail: String {
+        if connection.cannotStore { return ChatGPTSignInError.storageUnavailable.errorDescription ?? "" }
         if connection.signingIn { return connection.demo ? "Signing in (simulated)…" : "Finish signing in in your browser." }
         guard let status = connection.status else { return "Lets the msgblast agent use your ChatGPT plan." }
         let account = status.email ?? "your ChatGPT account"
         return status.sharesPlan ? "Connected as \(account)" : "Plan usage is off for \(account)."
+    }
+
+    @ViewBuilder private var action: some View {
+        if connection.signingIn {
+            Button("Cancel") { connection.cancel() }.disabled(connection.demo)
+        } else if connection.status?.sharesPlan == true {
+            Button("Disconnect") { connection.disconnect() }
+        } else {
+            Button("Continue with ChatGPT") { connection.connect() }
+                .disabled(connection.cannotStore).accessibilityIdentifier("chatgpt-plan-connect")
+        }
     }
 
     var body: some View {
@@ -26,13 +38,7 @@ struct ChatGPTConnectionView: View {
                     Text(detail).font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("chatgpt-plan-status")
                 }
                 Spacer(minLength: 12)
-                if connection.signingIn {
-                    Button("Cancel") { connection.cancel() }.disabled(connection.demo)
-                } else if connection.status?.sharesPlan == true {
-                    Button("Disconnect") { connection.disconnect() }
-                } else {
-                    Button("Continue with ChatGPT") { connection.connect() }.accessibilityIdentifier("chatgpt-plan-connect")
-                }
+                action
             }.padding(.vertical, 10)
             if connection.status?.sharesPlan == true {
                 Text("Set a limit for msgblast in ChatGPT Settings. On Plus, the five-hour limit is shared with ChatGPT and your other apps.")

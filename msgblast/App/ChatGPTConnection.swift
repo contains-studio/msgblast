@@ -13,6 +13,8 @@ import msgblastCore
     @Published private(set) var message: String?
     /// A sign-in came back with another account than the saved one.
     @Published private(set) var offerNewAccount = false
+    /// This copy of msgblast cannot write to the Keychain, so it cannot connect at all.
+    @Published private(set) var cannotStore = false
     /// OpenAI asks apps to say once, after the first sign-in, that usage now comes from the plan.
     @Published var welcome = false
     let demo: Bool
@@ -49,7 +51,8 @@ import msgblastCore
                 }
             } catch is CancellationError {
             } catch {
-                message = error.localizedDescription
+                cannotStore = error as? ChatGPTSignInError == .storageUnavailable
+                message = cannotStore ? nil : error.localizedDescription
                 offerNewAccount = error as? ChatGPTSignInError == .differentAccount
                 model?.recordOperation(.setup, success: false, started: started)
             }
