@@ -23,14 +23,18 @@ public actor LiveAgentRunner: MsgblastAgentRunner {
 
     private func run(_ text: String, _ continuation: AsyncStream<MsgblastAgentEvent>.Continuation) async {
         interrupted = false
+        var failed = false
         do {
             let runner = try await opened()
-            for await event in runner.send(text) {
-                if case .completed(let id) = event { sessionID = id }
-                continuation.yield(event)
+            if !interrupted {
+                for await event in runner.send(text) {
+                    if case .completed(let id) = event { sessionID = id }
+                    if case .failed = event { failed = true }
+                    continuation.yield(event)
+                }
             }
         } catch { continuation.yield(.failed(error.localizedDescription)) }
-        if interrupted { await end() }
+        if interrupted || failed { await end() }
         continuation.finish()
     }
 
@@ -53,7 +57,10 @@ public actor LiveAgentRunner: MsgblastAgentRunner {
         await Self.call(Box(runner: runner)) { await $0.interrupt() }
     }
 
-    public func close() async { await end() }
+    public func close() async {
+        interrupted = true
+        await end()
+    }
 
     private func end() async {
         guard let ending = session else { return }
