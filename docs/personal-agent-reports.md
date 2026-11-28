@@ -26,6 +26,22 @@ Settings also shows OpenClaw and Hermes installation status and their official i
 
 Tests use local website and executable fixtures; they do not prove current live website layouts, provider authentication, billing, or live CLI resumption. Demo replies never invoke installed CLIs or provider services. Session handling follows [Codex non-interactive mode](https://developers.openai.com/codex/noninteractive) and [Claude Code programmatic conversations](https://code.claude.com/docs/en/headless#continue-conversations).
 
+## Connect with ChatGPT for the msgblast agent
+
+The msgblast agent can think with Claude Code's own login, `codex login`, or **Connect with ChatGPT** in **Settings → CLI tools**. Connect with ChatGPT uses OpenAI's [token sharing for open-source apps](https://developers.openai.com/siwc/token-sharing-open-source/sign-in): no client registration ahead of time and no API key. msgblast never offers a claude.ai sign-in or reads Claude tokens.
+
+**Continue with ChatGPT** starts a loopback listener on `127.0.0.1` (path `/auth/callback`, any free port) and then opens the system browser. Each attempt has a fresh PKCE (S256) verifier, `state` and `nonce`, and asks for `openid profile email offline_access resource.invoke chatgpt.tokens.use.direct` on the resource `https://api.openai.com/v1`. The first sign-in sends `client_id=dynamic_agent_client`, `agent_name_hint=msgblast` and an `ext_agent_host_id` (`urn:uuid:…`) that is made once for this Mac and stored before the first sign-in. OpenAI issues an `oaiapp_…` client id for that ChatGPT account, which msgblast uses for every later sign-in, refresh and revocation, with `login_hint` and `id_token_hint`.
+
+msgblast verifies the ID token's RS256 signature against OpenAI's published keys, its issuer, audience (the issued client id), expiry and nonce, and identifies the account by `sub`, never by email. A sign-in that returns a different account leaves the saved one unchanged and offers **Use Another Account**, which registers a new client. If plan usage (`chatgpt.tokens.use.direct`) is not granted, the account is kept with plan usage off and the next sign-in asks for consent again.
+
+Tokens stay in the data protection Keychain, one item per registration, and never go in logs, URLs or test evidence. Only the app refreshes them, one refresh at a time per account, so a rotating refresh token is never sent twice. A refresh that OpenAI rejects for good clears the tokens and keeps the client id; network failures keep them. **Disconnect** revokes the refresh token at OpenAI's revocation endpoint and clears the tokens. If OpenAI does not confirm, Settings says so and points to ChatGPT Settings.
+
+Codex gets the token without `~/.codex`. Its `CODEX_HOME` is `chatgpt-codex` in this build's support folder, so Dev, Demo and production stay apart. A `msgblast_chatgpt` model provider points at `https://api.openai.com/v1`, and its `auth` command is the hidden `msgblast __chatgpt-token CLIENT_ID`. That command asks the running app over a socket in an owner-only `chatgpt` folder and prints the current token, but only for the account the session started on. The Codex runner removes `OPENAI_API_KEY` from Codex's environment, and `OPENAI_BASE_URL` cannot redirect the token because the provider sets its own `base_url`.
+
+Set a usage limit for msgblast in [ChatGPT Settings → Usage](https://chatgpt.com/settings/usage). On Plus, the five-hour limit is shared with ChatGPT and every other app that uses the plan. After the first sign-in with plan usage, msgblast shows OpenAI's one-time notice. Demo simulates the sign-in with `demo@example.com` and never opens the browser or the Keychain.
+
+`ChatGPTIDTokenTests`, `ChatGPTTokenSharingTests` and `ChatGPTCodexTests` use a local fixture of OpenAI's endpoints, a signing key made for the test, and the real loopback listener. `bash scripts/test_chatgpt_codex_token.sh build/contributor-tests` runs the installed `codex app-server` with this configuration against the actual token listener and helper, a fixture account and a local stand-in for `api.openai.com`; it checks that Codex sends the fixture token and that `~/.codex` is not used. These checks do not prove a live OpenAI sign-in or plan billing.
+
 ## OpenClaw and Hermes terminal setup
 
 Install the command-line app using its official guide. A desktop app alone may

@@ -124,6 +124,10 @@ final class AppModel: ObservableObject {
     lazy var agentSends = AgentControlSends(model: self)
     lazy var wants = WantsModel(app: self)
     lazy var agentControl = AgentControlListener(directory: local.url.deletingLastPathComponent(), host: self)
+    lazy var chatGPT = ChatGPTAccounts(storage: demo ? .memory() : .keychain(service: "com.msgblast.chatgpt.\(Bundle.main.bundleIdentifier ?? "unknown")"))
+    lazy var chatGPTConnection = ChatGPTConnection(accounts: chatGPT, demo: demo, model: self)
+    /// Codex's token socket. Demo has none.
+    lazy var chatGPTTokens: ChatGPTTokenListener? = demo ? nil : ChatGPTTokenListener(supportDirectory: local.url.deletingLastPathComponent(), accounts: chatGPT)
     lazy var webAgents = WebAgents(directory: local.url.deletingLastPathComponent(), fixture: demo && Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool != true, websiteOptInRequired: true)
     lazy var webImageCache: WebImageCache = WebImageCache(directory: local.url.deletingLastPathComponent().appendingPathComponent("web-images", isDirectory: true), onChange: { [weak self] in
         self?.objectWillChange.send()
@@ -175,6 +179,7 @@ final class AppModel: ObservableObject {
         }
         refresh()
         _ = agentControl
+        chatGPTTokens?.start()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in Task { @MainActor in self?.refreshIfChanged() } }
         Task { await telemetry.configure(storageLoadFailed ? nil : state.sharingConsent); telemetryHeartbeat() }
         if TelemetryCollector.endpoint(demo: demo) != nil {

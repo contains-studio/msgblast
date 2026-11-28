@@ -169,6 +169,7 @@ private struct BlastCommands: Commands {
 @main
 enum msgblastMain {
     @MainActor static func main() {
+        ChatGPTTokenCommand.runIfRequested()
         AgentControlCommand.runIfRequested()
         #if DEBUG
         if UpdateProbe.isLocalFixture {
