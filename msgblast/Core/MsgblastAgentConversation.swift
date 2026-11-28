@@ -5,9 +5,14 @@ public struct MsgblastAgentMessage: Codable, Equatable, Identifiable, Sendable {
     public var id = UUID()
     public var role: Role
     public var text: String
-    /// Marks the quiet note left when the person stopped a turn. Older builds read it as agent text.
-    public var stopped: Bool?
-    public init(role: Role, text: String, stopped: Bool? = nil) { self.role = role; self.text = text; self.stopped = stopped }
+    /// When the message was added. Older saved conversations have none.
+    public var created: Date?
+    /// A quiet centred line, such as "Stopped" or "Sent to Codex CLI and Claude Code", rather than a bubble.
+    /// Older builds read it as agent text.
+    public var note: Bool?
+    public init(role: Role, text: String, note: Bool? = nil, created: Date? = Date()) {
+        self.role = role; self.text = text; self.note = note; self.created = created
+    }
 }
 
 /// The built-in agent's one saved conversation. `sessionID` belongs to `account`'s CLI.

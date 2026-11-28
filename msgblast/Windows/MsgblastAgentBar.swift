@@ -186,7 +186,7 @@ private struct LinkedText: NSViewRepresentable {
     func updateNSView(_ view: NSTextView, context: Context) {
         context.coordinator.open = open
         let styled: NSAttributedString
-        if message.stopped == true {
+        if message.note == true {
             styled = NSAttributedString(string: message.text, attributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
                                                                             .foregroundColor: NSColor.tertiaryLabelColor])
         } else if message.role == .person {

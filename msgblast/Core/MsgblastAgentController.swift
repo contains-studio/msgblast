@@ -66,6 +66,13 @@ public final class MsgblastAgentController: ObservableObject {
         }
     }
 
+    /// Adds a step line, such as "Sent to Codex CLI and Claude Code", to the turn that is running.
+    public func note(_ text: String) {
+        guard isWorking else { return }
+        conversation.messages.append(MsgblastAgentMessage(role: .agent, text: text, note: true))
+        save()
+    }
+
     /// Stops the current turn. Anything already submitted stays submitted.
     public func stop() async {
         guard isWorking, let runner else { return }
@@ -83,7 +90,7 @@ public final class MsgblastAgentController: ObservableObject {
     private func apply(_ event: MsgblastAgentEvent) -> Bool {
         switch event {
         case .text(let text):
-            if let last = conversation.messages.last, last.role == .agent, last.stopped != true {
+            if let last = conversation.messages.last, last.role == .agent, last.note != true {
                 conversation.messages[conversation.messages.count - 1].text += text
             }
             else { conversation.messages.append(MsgblastAgentMessage(role: .agent, text: text)) }
@@ -101,7 +108,7 @@ public final class MsgblastAgentController: ObservableObject {
     }
 
     private func finish(_ next: MsgblastAgentStatus) {
-        if stopping { conversation.messages.append(MsgblastAgentMessage(role: .agent, text: "Stopped", stopped: true)) }
+        if stopping { conversation.messages.append(MsgblastAgentMessage(role: .agent, text: "Stopped", note: true)) }
         status = next
         stopping = false
         turn = nil

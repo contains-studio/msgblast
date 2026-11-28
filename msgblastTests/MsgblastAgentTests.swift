@@ -92,7 +92,8 @@ final class MsgblastAgentTests: XCTestCase {
         XCTAssertTrue(controller.isWorking)
         await controller.stop()
         XCTAssertEqual(controller.status, .idle)
-        XCTAssertEqual(controller.conversation.messages.last?.stopped, true)
+        XCTAssertEqual(controller.conversation.messages.last?.note, true)
+        XCTAssertNotNil(controller.conversation.messages.last?.created)
         XCTAssertEqual(controller.conversation.messages.map(\.role), [.person, .agent])
     }
 
