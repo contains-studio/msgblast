@@ -113,15 +113,24 @@ enum DesignFixtures {
     /// The Mac's agent after summing up the pesto comparison, mid-turn, failed, or not set up.
     static func agentChat(_ name: Name) -> RemoteAgentChat {
         let link = "msgblast://comparison/\(group.uuidString)"
+        func at(_ minutes: Double) -> Date { now.addingTimeInterval(-minutes * 60) }
         var messages = [
-            RemoteAgentMessage(id: UUID(), fromPerson: true, text: "Ask Claude, ChatGPT and Muse which pasta shape suits pesto best"),
-            RemoteAgentMessage(id: UUID(), fromPerson: false, text: "Claude, ChatGPT and Muse replied. Claude and Muse pick trofie for how the twists hold the sauce; ChatGPT prefers linguine, as in Liguria.\n\n"
-                + "[Open the comparison](\(link)) · [Claude](\(link)?agent=claude) · [ChatGPT](\(link)?agent=chatgptApp) · [Muse](\(link)?agent=museApp)"),
+            RemoteAgentMessage(id: UUID(), fromPerson: true, text: "Ask Claude, ChatGPT and Muse which pasta shape suits pesto best", created: at(182)),
+            RemoteAgentMessage(id: UUID(), fromPerson: false, text: "All three replied:\n\n- **Claude** and **Muse** pick trofie: the twists hold the sauce\n- **ChatGPT** prefers linguine, as in Liguria\n\n"
+                + "[Open the comparison](\(link)) · [Claude](\(link)?agent=claude) · [ChatGPT](\(link)?agent=chatgptApp) · [Muse](\(link)?agent=museApp)", created: at(180)),
+            RemoteAgentMessage(id: UUID(), fromPerson: true, text: "Now ask them for a nut-free pesto", created: at(6)),
+            RemoteAgentMessage(id: UUID(), fromPerson: false, text: "Stopped", created: at(6), note: true),
         ]
-        if name == .agentWorking || name == .agentFailed { messages.append(RemoteAgentMessage(id: UUID(), fromPerson: true, text: "Now ask them for a nut-free pesto")) }
-        if name == .agentSetup { messages = [] }
+        switch name {
+        case .agentWorking, .agentFailed: messages.append(RemoteAgentMessage(id: UUID(), fromPerson: true, text: "Ask Claude only, and keep it short", created: at(1)))
+        case .agentSetup: messages = []
+        default: messages.append(contentsOf: [
+            RemoteAgentMessage(id: UUID(), fromPerson: true, text: "Ask Claude only, and keep it short", created: at(5)),
+            RemoteAgentMessage(id: UUID(), fromPerson: false, text: "[Claude](\(link)?agent=claude) suggests sunflower seeds and extra basil.", created: at(4)),
+        ])
+        }
         var chat = RemoteAgentChat(account: name == .agentSetup ? nil : "Claude Code", state: .idle, messageIDs: messages.map(\.id), messages: messages)
-        if name == .agentWorking { chat.state = .working; chat.line = "Sent to 3 agents · waiting for replies…" }
+        if name == .agentWorking { chat.state = .working; chat.line = "Sent to 1 agent · waiting for replies…" }
         if name == .agentFailed {
             chat.state = .failed
             chat.line = "Sign in to Claude Code on your Mac"

@@ -28,6 +28,30 @@ final class AgentChatTests: XCTestCase {
         XCTAssertNil(AgentChat.comparison(URL(string: "msgblast://pair?offer=x")!))
     }
 
+    func testRepliesHideAddressesAndCardEachComparisonOnce() {
+        let id = UUID(), other = UUID()
+        let link = "msgblast://comparison/\(id.uuidString)"
+        let text = "**Claude** and Codex replied.\n\n[Open the comparison](\(link)) · [Claude](\(link)?agent=claude) · \(link)?agent=codexCLI\n\nAlso msgblast://comparison/\(other.uuidString) and \(link)"
+        let reply = AgentChat.reply(text) { $0 == "codexCLI" ? "Codex CLI" : nil }
+        XCTAssertEqual(reply.comparisons, [id, other])
+        XCTAssertEqual(reply.blocks, [
+            .paragraph("**Claude** and Codex replied."),
+            .paragraph("[Claude](\(link)?agent=claude) · [Codex CLI](\(link)?agent=codexCLI)"),
+            .paragraph("Also and"),
+        ])
+    }
+
+    func testRepliesKeepHeadingsAndNestedNumberedLists() {
+        let blocks = AgentChat.reply("## Summary\n- **Trofie** wins\n  - twists hold sauce\n2. Linguine\nPlain - not a list", agentName: { _ in nil }).blocks
+        XCTAssertEqual(blocks, [
+            .heading("Summary"),
+            .item("**Trofie** wins", marker: "•", level: 0),
+            .item("twists hold sauce", marker: "•", level: 1),
+            .item("Linguine", marker: "2.", level: 0),
+            .paragraph("Plain - not a list"),
+        ])
+    }
+
     @MainActor func testTheChatIsCachedTheDraftClearsOnceAskedAndForgetClearsBoth() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("mobile-agent-\(UUID().uuidString).sqlite")
         defer { try? FileManager.default.removeItem(at: url) }

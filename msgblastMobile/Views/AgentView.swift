@@ -2,7 +2,8 @@ import SwiftUI
 import msgblastMobileKit
 import msgblastRemoteProtocol
 
-/// The Mac's msgblast agent: its conversation, what it is doing with Stop, and a composer.
+/// The Mac's msgblast agent as a Messages conversation: your messages in blue on the right,
+/// its answers in grey on the left, steps as small centred lines, and comparisons as cards.
 /// It runs on the Mac with the account chosen there; this screen only asks and shows.
 struct AgentView: View {
     @ObservedObject var app: MobileApp
@@ -12,29 +13,33 @@ struct AgentView: View {
     /// The Mac's answer to the last ask or Stop, when it refused or never answered.
     @State private var notice: String?
     @State private var opened: AgentLinkTarget?
-    @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var width: CGFloat = 390
+    private static let bottomID = "agent-bottom"
 
     private var chat: RemoteAgentChat? { app.store.agentChat }
+    private var messages: [RemoteAgentMessage] { chat?.messages ?? [] }
     private var working: Bool { chat?.state == .working }
     private var setUp: Bool { chat?.account != nil }
-    private var canAsk: Bool {
-        setUp && !working && !asking && app.connection.state.canSend && !app.store.projection.macLocked
-            && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
+    private var connected: Bool { app.connection.state.canSend && !app.store.projection.macLocked }
+    private var canAsk: Bool { setUp && !working && !asking && connected && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: Space.runGap) {
-                    ForEach(chat?.messages ?? []) { message in bubble(message).id(message.id) }
+                LazyVStack(spacing: 0) {
+                    ForEach(messages.indices, id: \.self) { index in row(index).id(messages[index].id) }
+                    statusRows
+                    Color.clear.frame(height: 1).id(Self.bottomID)
                 }
                 .padding(.horizontal, Space.screen).padding(.vertical, Space.inset)
             }
             .defaultScrollAnchor(.bottom)
-            .onChange(of: chat?.messages.last) { _, last in withAnimation(.snappy) { proxy.scrollTo(last?.id, anchor: .bottom) } }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+            .onChange(of: messages.last) { _, _ in withAnimation(.snappy) { proxy.scrollTo(Self.bottomID, anchor: .bottom) } }
+            .onChange(of: working) { _, _ in withAnimation(.snappy) { proxy.scrollTo(Self.bottomID, anchor: .bottom) } }
         }
         .overlay {
-            if chat?.messages.isEmpty != false {
+            if messages.isEmpty && !working {
                 ContentUnavailableView {
                     Label("msgblast agent", systemImage: "sparkles")
                 } description: {
@@ -42,7 +47,7 @@ struct AgentView: View {
                 }
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
+        .safeAreaInset(edge: .bottom, spacing: 0) { composer }
         .navigationTitle("msgblast agent")
         .navigationBarTitleDisplayMode(.inline)
         .modifier(AgentSubtitle(app: app, account: chat?.account))
@@ -58,66 +63,114 @@ struct AgentView: View {
         .onChange(of: text) { _, value in app.store.setDraft(value, for: MobileStore.agentDraftKey) }
     }
 
-    /// What you asked in Messages' blue on the right; the agent's reply as plain text across the screen.
-    @ViewBuilder private func bubble(_ message: RemoteAgentMessage) -> some View {
-        let markdown = (try? AttributedString(markdown: message.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(message.text)
-        if message.fromPerson {
-            Text(markdown)
-                .foregroundStyle(.white)
-                .padding(.horizontal, Space.bubbleH).padding(.vertical, Space.bubbleV)
-                .background(Color("Bubble"), in: RoundedRectangle(cornerRadius: Space.cornerBubble, style: .continuous))
-                .containerRelativeFrame(.horizontal, alignment: .trailing) { width, _ in width * Space.bubbleMax }
-                .frame(maxWidth: .infinity, alignment: .trailing)
+    // MARK: Rows
+
+    /// One message: its time header when one is due, then a bubble or a centred note.
+    @ViewBuilder private func row(_ index: Int) -> some View {
+        let message = messages[index]
+        let previous = index == 0 ? nil : messages[index - 1]
+        let next = index + 1 < messages.count ? messages[index + 1] : nil
+        let header = message.created.flatMap { ProjectionPresenter.timeHeader($0, previous: previous?.created) }
+        let nextHeader = next?.created.flatMap { ProjectionPresenter.timeHeader($0, previous: message.created) }
+        if let header { CentredLine(text: header, weight: .semibold).padding(.top, index == 0 ? 0 : Space.separator).padding(.bottom, Space.separator) }
+        if message.note == true {
+            CentredLine(text: message.text).padding(.vertical, Space.gap)
         } else {
-            Text(markdown)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            let continues = header == nil && previous.map { Self.sameSide($0, message) } == true
+            let endsRun = nextHeader != nil || next.map { Self.sameSide(message, $0) } != true
+            bubble(message, tail: endsRun)
+                .padding(.top, header != nil || previous == nil ? 0 : continues ? Space.run : Space.runGap)
         }
     }
 
-    private var bottomBar: some View {
-        VStack(alignment: .leading, spacing: Space.gap) {
-            if let line = statusLine {
-                // At accessibility sizes Stop goes under the line rather than squeezing it to a word per row.
-                let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: Space.gap)) : AnyLayout(HStackLayout(spacing: Space.gap))
-                layout {
-                    HStack(spacing: Space.gap) {
-                        if working { ProgressView().controlSize(.small) }
-                        Text(line.text).font(.footnote).foregroundStyle(line.failed ? Color.red : Color.secondary)
-                        if let detail = line.detail { DetailButton(detail: detail) }
-                    }
-                    if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
-                    if working { Button("Stop", action: stop).buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.small) }
-                }
-                .padding(.horizontal, Space.screen - Space.barEdge)
+    private static func sameSide(_ a: RemoteAgentMessage, _ b: RemoteAgentMessage) -> Bool {
+        a.note != true && b.note != true && a.fromPerson == b.fromPerson
+    }
+
+    @ViewBuilder private func bubble(_ message: RemoteAgentMessage, tail: Bool) -> some View {
+        let mine = message.fromPerson
+        MaxWidth(width: width * Space.bubbleMax) {
+            Group {
+                if mine { Text(Self.inline(message.text)).tint(.white) } else { reply(message.text) }
             }
-            HStack(alignment: .bottom, spacing: Space.gap) {
-                MessageField(text: $text, placeholder: "Ask msgblast agent…", focused: $focused)
-                    .frame(minHeight: Space.fieldHeight)
-                    .background(RoundedRectangle(cornerRadius: Space.fieldHeight / 2, style: .continuous).fill(Color(.secondarySystemBackground)))
-                    .disabled(!setUp)
-                Button(action: ask) {
-                    Image(systemName: "arrow.up").font(.system(size: Space.glyph * 0.85, weight: .semibold))
-                        .foregroundStyle(canAsk ? Color.white : Color.secondary)
-                        .frame(width: Space.fieldHeight, height: Space.fieldHeight)
-                        .background(Circle().fill(canAsk ? AnyShapeStyle(.tint) : AnyShapeStyle(Color(.tertiarySystemFill))))
-                }
-                .buttonStyle(.plain)
-                .disabled(!canAsk)
-                .accessibilityLabel("Ask")
-            }
+            .font(.body)
+            .textSelection(.enabled)
+            .padding(.horizontal, Space.bubbleH).padding(.vertical, Space.bubbleV)
+            .background(BubbleShape(mine: mine, tail: tail).fill(mine ? Color("Bubble") : Color(.secondarySystemBackground)))
+            .foregroundStyle(mine ? .white : .primary)
+            .contextMenu { Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.text } }
         }
-        .padding(.horizontal, Space.barEdge).padding(.vertical, Space.barV)
+        .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
+    }
+
+    /// The agent's answer: paragraphs, headings and lists, then a card for each comparison it linked.
+    private func reply(_ text: String) -> some View {
+        let reply = AgentChat.reply(text) { app.store.projection.agents[$0]?.displayName }
+        return VStack(alignment: .leading, spacing: Space.gap) {
+            ForEach(reply.blocks.indices, id: \.self) { index in
+                switch reply.blocks[index] {
+                case .paragraph(let text): Text(Self.inline(text))
+                case .heading(let text): Text(Self.inline(text)).font(.headline)
+                case .item(let text, let marker, let level):
+                    HStack(alignment: .firstTextBaseline, spacing: Space.tight + Space.hairline) {
+                        Text(marker).foregroundStyle(.secondary)
+                        Text(Self.inline(text))
+                    }
+                    .padding(.leading, CGFloat(level) * Space.screen)
+                }
+            }
+            ForEach(reply.comparisons, id: \.self) { id in ComparisonCard(app: app, id: id) { opened = AgentLinkTarget(id: id, agentID: nil) } }
+        }
+    }
+
+    private static func inline(_ text: String) -> AttributedString {
+        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
+    }
+
+    /// While working: the step as a centred line and the typing bubble. Otherwise what went wrong, if anything.
+    @ViewBuilder private var statusRows: some View {
+        if working {
+            if let line = chat?.line { CentredLine(text: line).padding(.top, Space.separator) }
+            TypingBubble(app: app, agentID: "", name: "msgblast agent", showsAvatar: false).padding(.top, Space.gap)
+        } else if let notice {
+            CentredLine(text: notice, failed: true).padding(.top, Space.separator)
+        } else if !setUp && !messages.isEmpty {
+            CentredLine(text: "Set up the msgblast agent on your Mac").padding(.top, Space.separator)
+        } else if chat?.state == .failed, let line = chat?.line {
+            CentredLine(text: line, detail: chat?.detail, failed: true).padding(.top, Space.separator)
+        }
+    }
+
+    // MARK: Composer
+
+    /// Messages' field with a round Send that becomes Stop while the agent works.
+    private var composer: some View {
+        HStack(alignment: .bottom, spacing: Space.gap) {
+            MessageField(text: $text, placeholder: "Message msgblast agent", focused: $focused)
+                .frame(minHeight: Space.fieldHeight)
+                .background(RoundedRectangle(cornerRadius: Space.fieldHeight / 2, style: .continuous).fill(Color(.secondarySystemBackground)))
+                .disabled(!setUp)
+            Button { if working { stop() } else { ask() } } label: { sendLabel }
+            .buttonStyle(.plain)
+            .disabled(!sendEnabled)
+            .accessibilityLabel(working ? "Stop" : "Send")
+        }
+        .padding(.horizontal, Space.barEdge).padding(.vertical, Space.barV - (Space.control - Space.fieldHeight) / 2)
         .background(.bar)
     }
 
-    /// At most one line: the agent's step or failure, else what the Mac said about the last ask.
-    private var statusLine: (text: String, detail: String?, failed: Bool)? {
-        if !setUp && chat?.messages.isEmpty == false { return ("Set up the msgblast agent on your Mac", nil, false) }
-        if working { return (chat?.line ?? "Working…", nil, false) }
-        if let notice { return (notice, nil, true) }
-        if chat?.state == .failed, let line = chat?.line { return (line, chat?.detail, true) }
-        return nil
+    /// Send asks; while the agent works the same button stops it.
+    private var sendEnabled: Bool { working ? connected : canAsk }
+    private var sendLabel: some View {
+        let symbol = working ? "stop.fill" : "arrow.up"
+        let fill: AnyShapeStyle = sendEnabled ? AnyShapeStyle(.tint) : AnyShapeStyle(Color(.tertiarySystemFill))
+        return Image(systemName: symbol)
+            .font(.system(size: Space.glyph * (working ? 0.7 : 0.85), weight: .semibold))
+            .foregroundStyle(sendEnabled ? Color.white : Color.secondary)
+            .frame(width: Space.fieldHeight, height: Space.fieldHeight)
+            .background(Circle().fill(fill))
+            .frame(width: Space.control, height: Space.control)
+            .contentShape(Circle())
     }
 
     private func ask() {
@@ -134,6 +187,60 @@ struct AgentView: View {
 
     private func stop() {
         Task { notice = await app.stopAgent() }
+    }
+}
+
+/// A small centred line between messages, as Messages shows times and events.
+private struct CentredLine: View {
+    var text: String
+    var weight: UIFont.Weight = .regular
+    var detail: String? = nil
+    var failed = false
+    var body: some View {
+        HStack(spacing: Space.tight) {
+            Text(text).font(.scaled(Space.threadCaption, weight: weight, relativeTo: .caption2))
+                .foregroundStyle(failed ? Color.red : Color.secondary)
+                .multilineTextAlignment(.center)
+            if let detail { DetailButton(detail: detail).font(.caption) }
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+/// A comparison the agent linked: its title, the agents' icons and how many replied. Opens its thread.
+private struct ComparisonCard: View {
+    @ObservedObject var app: MobileApp
+    let id: UUID
+    let open: () -> Void
+    var body: some View {
+        let conversation = app.store.projection.conversations[id]
+        let replied = Set(app.store.projection.turns(in: id).filter { $0.role == .assistant }.compactMap(\.agentID)).count
+        Button(action: open) {
+            HStack(spacing: Space.gap) {
+                VStack(alignment: .leading, spacing: Space.tight) {
+                    Text(conversation?.title ?? "Comparison").font(.subheadline.weight(.semibold)).lineLimit(2).multilineTextAlignment(.leading)
+                    HStack(spacing: Space.tight) {
+                        HStack(spacing: -Space.tight) {
+                            ForEach((conversation?.agentIDs ?? []).prefix(5), id: \.self) { agent in
+                                AgentAvatar(app: app, agentID: agent, name: app.store.projection.agents[agent]?.displayName ?? agent, size: Space.avatarInline)
+                                    .background(Circle().fill(Color(.systemBackground)).padding(-1))
+                            }
+                        }
+                        Text(conversation == nil ? "Open on your Mac" : replied == 1 ? "1 reply" : replied == 0 ? "No replies yet" : "\(replied) replies")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            }
+            .padding(Space.inset)
+            .background(RoundedRectangle(cornerRadius: Space.cornerCard, style: .continuous).fill(Color(.systemBackground)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(conversation == nil)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens the comparison")
     }
 }
 
