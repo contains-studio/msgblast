@@ -12,7 +12,7 @@ source](build-from-source.md) and [Testing](testing.md) for runnable commands.
 | Main orchestration | `msgblast/App/AppModel.swift` | Agent selection, Messages refresh, comparison lifecycle, sending, and persistence |
 | Update lifecycle | `msgblast/App/AppUpdater.swift`, `UpdateProbe.swift` | Sparkle configuration and isolated Debug update fixtures |
 | Report orchestration | `msgblast/App/PersonalAgentController.swift` | CLI discovery, report requests, cancellation, and saved reports |
-| msgblast agent | `msgblast/Core/MsgblastAgent*.swift`, `DemoAgentRunner.swift`, `msgblast/Windows/MsgblastAgentBar.swift` | The built-in agent's runner contract, saved conversation, instructions, Demo script, and the bar above the agents (Demo only until the live runners are wired) |
+| msgblast agent | `msgblast/Core/MsgblastAgent*.swift`, `LiveAgentRunner.swift`, `ClaudeAgentSession.swift`, `CodexAgentSession.swift`, `DemoAgentRunner.swift`, `msgblast/Windows/MsgblastAgentBar.swift` | The built-in agent's contract, saved conversation and instructions; the Claude Code and Codex sessions with their per-session keys; the Demo script; and the bar above the agents |
 | Main and comparison UI | `msgblast/Windows/Views.swift`, `RichMessageViews.swift` | Picker, sidebar, conversations, scope, and transcript rendering |
 | Window ownership | `msgblast/Windows/WindowCoordinator.swift` | Joined/separate conversations, report windows, frames, and floating composer |
 | Web/CLI UI | `msgblast/Windows/WebServicesView.swift`, `WebProvider.swift`, `WebAgentSession.swift` in Core | Website panes, native CLI/Bot panes, and provider session state |

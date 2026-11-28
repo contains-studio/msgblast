@@ -123,8 +123,9 @@ final class AppModel: ObservableObject {
     let agentSendActivity = AgentControlActivity()
     lazy var agentSends = AgentControlSends(model: self)
     lazy var wants = WantsModel(app: self)
-    lazy var msgblastAgent = MsgblastAgentController(store: MsgblastAgentStore(directory: local.url.deletingLastPathComponent())) { [weak self] _, _ in
-        try self?.demoAgentRunner() ?? DemoAgentRunner(agents: [], comparisonID: UUID())
+    lazy var msgblastAgent = MsgblastAgentController(store: MsgblastAgentStore(directory: local.url.deletingLastPathComponent())) { [weak self] account, sessionID in
+        guard let self else { throw AppFailure.blocked("msgblast is closing.") }
+        return try self.personalAgent.demo ? self.demoAgentRunner() : self.liveAgentRunner(account, sessionID: sessionID)
     }
     @Published var paneFocus: PaneFocus?
     lazy var agentControl = AgentControlListener(directory: local.url.deletingLastPathComponent(), host: self)
@@ -190,9 +191,32 @@ final class AppModel: ObservableObject {
             telemetryTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in Task { @MainActor in self?.telemetryHeartbeat() } }
         }
     }
-    /// Demo's msgblast agent summarises the newest chat comparison. Live accounts arrive with the session runners.
+    /// The msgblast agent on the person's Claude Code, `codex login`, or Connect with ChatGPT account.
+    private func liveAgentRunner(_ account: MsgblastAgentAccount, sessionID: String?) -> MsgblastAgentRunner {
+        let support = local.url.deletingLastPathComponent(), executable = AgentControlCommand.executable
+        let personal = personalAgent, accounts = chatGPT
+        return LiveAgentRunner(keys: agentControl.sessionKeys, sessionID: sessionID) { key, sessionID in
+            let provider: PersonalAgentProvider = account == .claude ? .claude : .codex
+            await personal.discover()
+            guard let agent = await personal.installed.first(where: { $0.provider == provider }) else {
+                throw AppFailure.blocked("Install \(provider.name) to use it for the msgblast agent.")
+            }
+            switch account {
+            case .claude:
+                return try await ClaudeAgentSession.start(using: agent, msgblastExecutable: executable, sessionKey: key,
+                                                          instructions: MsgblastAgent.instructions, resuming: sessionID,
+                                                          workingDirectory: support.appendingPathComponent("msgblast-agent", isDirectory: true))
+            case .codexLogin:
+                return CodexAgentSession(agent: agent, instructions: MsgblastAgent.instructions, sessionKey: key, sessionID: sessionID)
+            case .chatGPT:
+                let launch = try await ChatGPTCodex.launch(supportDirectory: support, executable: executable, accounts: accounts)
+                return CodexAgentSession(agent: agent, codexHome: launch.codexHome, launchConfig: launch.launchConfig,
+                                         instructions: MsgblastAgent.instructions, sessionKey: key, sessionID: sessionID)
+            }
+        }
+    }
+    /// Demo's msgblast agent summarises the newest chat comparison and starts no CLI.
     private func demoAgentRunner() throws -> MsgblastAgentRunner {
-        guard demo else { throw AppFailure.blocked("The msgblast agent is not available in this build yet.") }
         guard let comparison = state.comparisons.first(where: { !$0.resolvedWebAgentIDs.isEmpty }) else {
             throw AppFailure.blocked("Send a blast first, then ask the msgblast agent about it.")
         }

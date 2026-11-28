@@ -273,9 +273,7 @@ struct MainView: View {
                     }.padding(18).background(.bar)
                     }
                 }
-                if model.demo {
-                    MsgblastAgentBar(model: model, agent: model.msgblastAgent, accounts: model.personalAgent, activity: model.agentSendActivity, maxHeight: detailHeight / 3)
-                }
+                MsgblastAgentBar(model: model, agent: model.msgblastAgent, accounts: model.personalAgent, activity: model.agentSendActivity, chatGPT: model.chatGPTConnection, maxHeight: detailHeight / 3)
                 StatusBanners(model: model)
                 AgentsWorkspaceView(model: model, web: model.webAgents, showingComparison: $showingComparison, newBlastRequest: model.newBlastRequest, captureLayout: captureLayout)
             }.navigationTitle("")

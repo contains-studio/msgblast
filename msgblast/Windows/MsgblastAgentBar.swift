@@ -8,6 +8,7 @@ struct MsgblastAgentBar: View {
     @ObservedObject var agent: MsgblastAgentController
     @ObservedObject var accounts: PersonalAgentController
     @ObservedObject var activity: AgentControlActivity
+    @ObservedObject var chatGPT: ChatGPTConnection
     /// About a third of the window, so the grid stays visible.
     let maxHeight: CGFloat
     @AppStorage("MsgblastAgentBarExpanded") private var expanded = false
@@ -21,7 +22,7 @@ struct MsgblastAgentBar: View {
         }
         .background(Self.tint.opacity(0.06)).background(.bar)
         .overlay(alignment: .bottom) { Divider() }
-        .task { await accounts.discover(); await accounts.refreshAccounts() }
+        .task { await accounts.discover(); await accounts.refreshAccounts(); await chatGPT.load() }
     }
 
     private var inputRow: some View {
@@ -74,6 +75,7 @@ struct MsgblastAgentBar: View {
         Menu {
             accountSection(.claude, provider: .claude, name: "Claude Code")
             accountSection(.codexLogin, provider: .codex, name: "ChatGPT · Codex")
+            chatGPTSection
         } label: {
             Text(accountName(agent.conversation.account) ?? "Choose account")
         }
@@ -101,10 +103,24 @@ struct MsgblastAgentBar: View {
         }
     }
 
+    /// Connect with ChatGPT: the plan connected in Settings, run through Codex without `codex login`.
+    @ViewBuilder
+    private var chatGPTSection: some View {
+        Section("ChatGPT plan") {
+            if let status = chatGPT.status, status.sharesPlan {
+                Toggle("Use ChatGPT plan", isOn: Binding(get: { agent.conversation.account == .chatGPT }, set: { if $0 { Task { await agent.choose(.chatGPT) } } }))
+                Text(status.email.map { "Connected as \($0)" } ?? "Connected")
+            } else {
+                SettingsLink { Text("Connect with ChatGPT…") }
+            }
+        }
+    }
+
     private func accountName(_ account: MsgblastAgentAccount?) -> String? {
         switch account {
         case .claude: "Claude Code"
-        case .codexLogin, .chatGPT: "ChatGPT"
+        case .codexLogin: "ChatGPT · Codex"
+        case .chatGPT: "ChatGPT plan"
         case nil: nil
         }
     }
