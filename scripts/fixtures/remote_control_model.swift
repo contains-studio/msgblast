@@ -378,6 +378,8 @@ extension SideChatModelCheck {
         // and a confirmed replacement pairing offer written next to the offer file.
         let lockFile = environment["MSGBLAST_REMOTE_LOCK_FILE"], unlockFile = environment["MSGBLAST_REMOTE_UNLOCK_FILE"]
         let replaceFile = environment["MSGBLAST_REMOTE_REPLACE_FILE"]
+        // Choosing the msgblast agent's account on the Mac; Demo runs DemoAgentRunner, never the account.
+        let agentFile = environment["MSGBLAST_REMOTE_AGENT_FILE"]
         var locked = false, replaced = false
         while !FileManager.default.fileExists(atPath: doneFile), Date() < deadline {
             try await Task.sleep(for: .milliseconds(100))
@@ -388,6 +390,7 @@ extension SideChatModelCheck {
             }
             if let lockFile, !locked, FileManager.default.fileExists(atPath: lockFile) { locked = true; service.power.simulate(locked: true) }
             if let unlockFile, locked, FileManager.default.fileExists(atPath: unlockFile) { locked = false; service.power.simulate(locked: false); try? FileManager.default.removeItem(atPath: unlockFile); try? FileManager.default.removeItem(atPath: lockFile ?? "") }
+            if let agentFile, model.msgblastAgent.conversation.account == nil, FileManager.default.fileExists(atPath: agentFile) { await model.msgblastAgent.choose(.claude) }
             if let replaceFile, !replaced, FileManager.default.fileExists(atPath: replaceFile) {
                 replaced = true
                 try service.showPairingCode(confirmReplacement: true).url.absoluteString.write(toFile: replaceFile + ".offer", atomically: true, encoding: .utf8)

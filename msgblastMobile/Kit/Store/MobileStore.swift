@@ -23,6 +23,8 @@ public final class MobileStore: ObservableObject {
     /// Replies made from this phone: command id → the quoted turn. Local only; the Mac
     /// never sees the link.
     @Published public private(set) var replyTo: [UUID: String]
+    /// The Mac's msgblast agent conversation, shown before the Mac answers. Nil until a Mac with the agent sends one.
+    @Published public private(set) var agentChat: RemoteAgentChat?
     private let database: LocalDatabase
     private var saveTask: Task<Void, Never>?
 
@@ -37,6 +39,7 @@ public final class MobileStore: ObservableObject {
         readPositions = try database.value([UUID: [String: Int]].self, "readPositions") ?? [:]
         unreadSince = try database.value(Date.self, "unreadSince")
         replyTo = try database.value([UUID: String].self, "replyTo") ?? [:]
+        agentChat = try database.value(RemoteAgentChat.self, "agentChat")
         let refs = try database.value([String].self, "avatarRefs") ?? []
         avatars = Dictionary(uniqueKeysWithValues: try refs.compactMap { ref in try database.data(Self.avatarKey(ref)).map { (ref, $0) } })
         // A previous run may have ended mid-command: those are unconfirmed until the Mac says otherwise.
@@ -48,6 +51,8 @@ public final class MobileStore: ObservableObject {
             let wasFinal = commands[result.clientCommandID]?.isFinal ?? true
             CommandLedger.apply(result, to: &commands)
             if !wasFinal, let record = commands[result.clientCommandID], record.status == .applied { clearDraft(sentBy: record) }
+        } else if case .agent(let update) = event {
+            agentChat = AgentChat.merge(update, into: agentChat)
         } else {
             projection = ProjectionReducer.reduce(projection, event)
             if case .snapshot = event, unreadSince == nil { unreadSince = Date(); try? database.setValue(unreadSince, "unreadSince") }
@@ -90,7 +95,11 @@ public final class MobileStore: ObservableObject {
     /// A send reached the Mac (now, or by a late query answer): its field's draft goes, unless
     /// edited since. Keyed as `ComposeBar` keys it: the agent only for one recipient in an
     /// existing conversation (a private send, or a direct thread's only member).
+    public static let agentDraftKey = "agent"
     private func clearDraft(sentBy record: CommandRecord) {
+        if record.kind == "sendToAgent", let text = record.text, drafts[Self.agentDraftKey]?.trimmingCharacters(in: .whitespacesAndNewlines) == text {
+            return setDraft("", for: Self.agentDraftKey)
+        }
         guard ["createConversation", "sendShared", "sendPrivate"].contains(record.kind), let text = record.text else { return }
         let recipients = record.agentIDs.isEmpty ? record.conversationID.flatMap { projection.conversations[$0]?.agentIDs } ?? [] : record.agentIDs
         let key = Self.draftKey(conversation: record.conversationID, agentID: recipients.count == 1 && record.conversationID != nil ? recipients[0] : nil)
@@ -161,6 +170,7 @@ public final class MobileStore: ObservableObject {
         readPositions = [:]
         unreadSince = nil
         replyTo = [:]
+        agentChat = nil
         database.removeAll()
     }
 
@@ -169,6 +179,7 @@ public final class MobileStore: ObservableObject {
         try? database.setValue(projection, "projection")
         try? database.setValue(commands, "commands")
         try? database.setValue(drafts, "drafts")
+        try? database.setValue(agentChat, "agentChat")
     }
 
     private func scheduleSave() {

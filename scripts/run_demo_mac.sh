@@ -13,7 +13,7 @@ trap cleanup EXIT INT TERM
 source "$root/scripts/remote_fixture_lib.sh"
 build_remote_fixture_model
 MSGBLAST_REMOTE_OFFER_FILE="$tmp/offer.txt" MSGBLAST_REMOTE_DONE_FILE="$tmp/done" MSGBLAST_REMOTE_ALLOW_MESSAGES=1 \
-    MSGBLAST_REMOTE_LISTEN_SECONDS="$seconds" MSGBLAST_REMOTE_EVIDENCE_DIR="${MSGBLAST_REMOTE_EVIDENCE_DIR:-}" \
+    MSGBLAST_REMOTE_LISTEN_SECONDS="$seconds" MSGBLAST_REMOTE_AGENT_FILE="${MSGBLAST_REMOTE_AGENT_FILE:-}" MSGBLAST_REMOTE_EVIDENCE_DIR="${MSGBLAST_REMOTE_EVIDENCE_DIR:-}" \
     "$tmp/model" --demo --isolated-demo --remote-listen-fixture &
 server_pid=$!
 for _ in $(seq 1 300); do [ -s "$tmp/offer.txt" ] && break; sleep 0.1; done
