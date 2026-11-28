@@ -238,25 +238,33 @@ public actor CodexAgentSession: MsgblastAgentRunner {
             drafts[id, default: ""] += delta
             lastDraft = id
         case "item/completed" where item["type"] as? String == "agentMessage":
-            let id = item["id"] as? String ?? ""
-            let text = (item["text"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? drafts[id] ?? ""
-            drafts[id] = nil
-            if lastDraft == id { lastDraft = nil }
-            switch item["phase"] as? String {
-            case "commentary": unphased = nil
-            case "final_answer", "partial_answer": unphased = nil; write(text)
-            default: unphased = text
-            }
+            completeMessage(item)
         case "item/started", "item/completed":
             guard item["type"] as? String == "mcpToolCall", let tool = item["tool"] as? String else { return }
             turn?.yield(.tool(name: tool, finished: method == "item/completed", failed: item["status"] as? String == "failed"))
         case "turn/completed":
-            if let text = unphased ?? lastDraft.flatMap({ drafts[$0] }) { write(text) }
+            writeLastUnphased()
             let completed = params["turn"] as? [String: Any] ?? [:], error = completed["error"] as? [String: Any]
             finishTurn(completed["status"] as? String == "failed"
                        ? .failed(error?["message"] as? String ?? "Codex couldn't finish the reply.") : .completed(sessionID: threadID))
         default: break
         }
+    }
+
+    private func completeMessage(_ item: [String: Any]) {
+        let id = item["id"] as? String ?? ""
+        let text = (item["text"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? drafts[id] ?? ""
+        drafts[id] = nil
+        if lastDraft == id { lastDraft = nil }
+        switch item["phase"] as? String {
+        case "commentary": unphased = nil
+        case "final_answer", "partial_answer": unphased = nil; write(text)
+        default: unphased = text
+        }
+    }
+
+    private func writeLastUnphased() {
+        if let text = unphased ?? lastDraft.flatMap({ drafts[$0] }) { write(text) }
     }
 
     private func write(_ text: String) {

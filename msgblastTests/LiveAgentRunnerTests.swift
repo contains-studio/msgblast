@@ -4,11 +4,13 @@ import XCTest
 private final class RecordingSession: MsgblastAgentRunner, @unchecked Sendable {
     let events: [MsgblastAgentEvent]
     var closed = false
+    var sent: [String] = []
     private var held: AsyncStream<MsgblastAgentEvent>.Continuation?
     init(_ events: [MsgblastAgentEvent]) { self.events = events }
     /// "Wait" holds the turn open until it is interrupted.
     func send(_ text: String) -> AsyncStream<MsgblastAgentEvent> {
-        AsyncStream { continuation in
+        sent.append(text)
+        return AsyncStream { continuation in
             if text == "Wait" { held = continuation; return }
             events.forEach { continuation.yield($0) }; continuation.finish()
         }
@@ -60,6 +62,41 @@ final class LiveAgentRunnerTests: XCTestCase {
         await runner.close()
         XCTAssertTrue(opens.sessions[1].closed)
         XCTAssertFalse(keys.hasLive)
+    }
+
+    func testStopWhileTheSessionOpensSendsNothingAndRevokesTheKey() async {
+        let keys = AgentSessionKeys(), opens = Opens()
+        let runner = LiveAgentRunner(keys: keys, sessionID: nil) { key, sessionID in
+            opens.calls.append((key, sessionID))
+            try await Task.sleep(for: .milliseconds(200))
+            let session = RecordingSession([.completed(sessionID: "s")])
+            opens.sessions.append(session)
+            return session
+        }
+        let turn = Task { await events(runner.send("Hi")) }
+        try? await Task.sleep(for: .milliseconds(50))
+        await runner.interrupt()
+        let result = await turn.value
+        XCTAssertEqual(result, [.failed("Stopped.")])
+        XCTAssertEqual(opens.sessions.first?.sent, [])
+        XCTAssertTrue(opens.sessions.first?.closed == true)
+        XCTAssertFalse(keys.hasLive)
+    }
+
+    func testAFailedTurnClosesTheSessionAndTheNextOneResumes() async {
+        let keys = AgentSessionKeys(), opens = Opens()
+        let runner = LiveAgentRunner(keys: keys, sessionID: "saved") { key, sessionID in
+            opens.calls.append((key, sessionID))
+            let session = RecordingSession(opens.calls.count == 1 ? [.failed("Claude Code stopped.")] : [.completed(sessionID: "s2")])
+            opens.sessions.append(session)
+            return session
+        }
+        _ = await events(runner.send("One"))
+        XCTAssertTrue(opens.sessions[0].closed)
+        XCTAssertFalse(keys.hasLive)
+        let next = await events(runner.send("Two"))
+        XCTAssertEqual(next.last, .completed(sessionID: "s2"))
+        XCTAssertEqual(opens.calls.map(\.sessionID), ["saved", "saved"])
     }
 
     func testAFailedOpenRevokesItsKeyAndFailsTheTurn() async {
