@@ -169,6 +169,9 @@ struct MsgblastAgentThread: View {
     @ObservedObject var activity: AgentControlActivity
     let open: (URL) -> Void
     private static let bottom = "msgblast-agent-bottom"
+    @State private var width: CGFloat = 600
+    /// Messages keeps bubbles to about 70% of the conversation, and never very wide.
+    private var bubbleWidth: CGFloat { min(560, max(240, (width - 32) * 0.7)) }
 
     var body: some View {
         let messages = Array(agent.conversation.messages.suffix(60))
@@ -197,6 +200,7 @@ struct MsgblastAgentThread: View {
                 }
                 .padding(.horizontal, 16).padding(.vertical, 10)
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             .onAppear { proxy.scrollTo(Self.bottom, anchor: .bottom) }
             .onChange(of: agent.conversation.messages) { _, _ in withAnimation { proxy.scrollTo(Self.bottom, anchor: .bottom) } }
             .onChange(of: agent.isWorking) { _, _ in withAnimation { proxy.scrollTo(Self.bottom, anchor: .bottom) } }
@@ -209,10 +213,11 @@ struct MsgblastAgentThread: View {
             Text(message.text).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity)
         } else if message.role == .person {
             HStack {
-                Spacer(minLength: 60)
+                Spacer(minLength: 0)
                 AgentMessageText(text: message.text, person: true, open: open)
                     .padding(.horizontal, 12).padding(.vertical, 7)
                     .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+                    .frame(maxWidth: bubbleWidth, alignment: .trailing)
             }
         } else {
             let parts = MsgblastAgentText.comparisonCards(in: message.text)
@@ -229,7 +234,8 @@ struct MsgblastAgentThread: View {
                 }
                 .padding(.horizontal, 12).padding(.vertical, 7)
                 .background(Self.agentBubble, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
-                Spacer(minLength: 60)
+                .frame(maxWidth: bubbleWidth, alignment: .leading)
+                Spacer(minLength: 0)
             }
         }
     }
@@ -283,7 +289,9 @@ private struct ComparisonCard: View {
                     }
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(comparison.title).font(.callout.weight(.semibold)).lineLimit(2).multilineTextAlignment(.leading)
+                    // The full prompt, not the 65-character title, so two lines end in an ellipsis rather than mid-word.
+                    Text(comparison.customTitle ?? (comparison.prompt.isEmpty ? comparison.title : comparison.prompt))
+                        .font(.callout.weight(.semibold)).lineLimit(2).truncationMode(.tail).multilineTextAlignment(.leading)
                     Text(replies == 1 ? "1 reply" : "\(replies) replies").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
@@ -365,8 +373,8 @@ struct MsgblastAgentAccountMenu: View {
         } label: {
             Text(accountName(agent.conversation.account) ?? "Choose account")
         }
-        .menuStyle(.borderlessButton).fixedSize()
-        .foregroundStyle(agent.conversation.account == nil ? Color.accentColor : .secondary)
+        .menuStyle(.button).buttonStyle(.bordered).controlSize(.small).fixedSize()
+        .tint(agent.conversation.account == nil ? Color.accentColor : nil)
         .accessibilityLabel("msgblast agent account")
     }
 
