@@ -40,11 +40,22 @@ import msgblastCore
         open += 1
         connection.start(queue: .main)
         let deadline = Task { try await Task.sleep(for: .seconds(5)); connection.cancel() }
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 1024) { [weak self] data, _, _, _ in
+        receive(connection, buffer: Data(), deadline: deadline)
+    }
+
+    private func receive(_ connection: NWConnection, buffer: Data, deadline: Task<Void, Error>) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 1024 - buffer.count) { [weak self] data, _, complete, _ in
             Task { @MainActor in
+                guard let self else { deadline.cancel(); return connection.cancel() }
+                let pending = buffer + (data ?? Data())
+                guard pending.last == 0x0A else {
+                    guard data == nil || complete || pending.count >= 1024 else { return self.receive(connection, buffer: pending, deadline: deadline) }
+                    deadline.cancel()
+                    self.open -= 1
+                    return connection.cancel()
+                }
                 deadline.cancel()
-                guard let self, let data, data.last == 0x0A else { self?.open -= 1; return connection.cancel() }
-                let reply = await ChatGPTCodex.reply(to: data.dropLast(), accounts: self.accounts)
+                let reply = await ChatGPTCodex.reply(to: pending.dropLast(), accounts: self.accounts)
                 connection.send(content: reply, completion: .contentProcessed { _ in connection.cancel() })
                 self.open -= 1
             }
