@@ -25,13 +25,16 @@ public actor AgentControlMCPServer {
     private let exchange: Exchange
     private let version: String
     private let fixedClient: String?
+    private let sessionKey: String?
     private var handshakeClient: String?
     private var wireID = 0
 
     /// `client` overrides the name the MCP client reports, for agents that report a generic one.
-    public init(version: String, client: String?, exchange: @escaping Exchange) {
+    /// `sessionKey`, from the built-in msgblast agent, goes with every request.
+    public init(version: String, client: String?, sessionKey: String? = nil, exchange: @escaping Exchange) {
         self.version = version
         fixedClient = client
+        self.sessionKey = sessionKey
         self.exchange = exchange
     }
 
@@ -189,6 +192,7 @@ public actor AgentControlMCPServer {
         var body = request
         body["id"] = wireID
         body["client"] = client
+        body["sessionKey"] = sessionKey
         var line = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
         line.append(0x0A)
         let reply: Data

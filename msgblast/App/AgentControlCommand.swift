@@ -54,7 +54,8 @@ enum AgentControlCommand {
     /// Reads JSON-RPC lines until stdin closes. Requests run concurrently, so a long wait never blocks a ping.
     private static func serve(client: String?, socket path: String) -> Int32 {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
-        let server = AgentControlMCPServer(version: version, client: client) { line in
+        let key = ProcessInfo.processInfo.environment[MsgblastAgent.sessionKeyEnvironment].flatMap { $0.isEmpty ? nil : $0 }
+        let server = AgentControlMCPServer(version: version, client: client, sessionKey: key) { line in
             try await withCheckedThrowingContinuation { continuation in
                 DispatchQueue.global().async { continuation.resume(with: Result { try AgentControlSocketClient.exchange(line, socket: path) }) }
             }

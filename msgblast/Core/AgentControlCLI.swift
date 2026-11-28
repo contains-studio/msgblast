@@ -165,6 +165,7 @@ public enum AgentControlCLI {
             switch error["code"] as? String {
             case "notApproved", "needsAccess": status = 3
             case "notFound": status = 4
+            case "unavailable": status = unavailableStatus
             case "invalidRequest", "invalidArguments", "unknownTool": status = 2
             default: status = 1
             }

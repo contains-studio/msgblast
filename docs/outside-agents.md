@@ -119,3 +119,27 @@ saved, so quitting msgblast doesn't turn sends back on.
 Settings → Outside agents has the same switch, and Recent sends under it lists the last
 agent sends since msgblast opened, with each one's result. The list never holds message text and
 is not saved.
+
+## The built-in msgblast agent
+
+msgblast's own agent reaches the same tools through `msgblast mcp`, with a
+session key instead of an approval. msgblast issues a key when a conversation
+with the agent starts and revokes it when the conversation ends; the agent's
+`msgblast mcp` reads it from `MSGBLAST_AGENT_SESSION_KEY` and adds it to every
+request. msgblast keeps only each key's SHA-256 hash, in memory, so every key
+ends when msgblast quits.
+
+- A request with a live key acts as **msgblast agent** with Full access and no
+  prompt. A key that isn't live is refused with `notApproved`, and nothing runs.
+- No other caller may use the name msgblast agent, in any case or spacing, and
+  Tailscale never accepts session keys.
+- The agent only messages AI agents. `msgblast_agents_list` leaves out Messages
+  contacts, the send tools refuse `messages:` and `featured:` ids, and a
+  follow-up must list its agents, since one without them reaches every member.
+- It works with Outside agents off. While a key is live the local socket
+  listens, but answers only requests with a live key; when the last key is
+  revoked it stops again. The Outside agents switch governs every other agent
+  exactly as before.
+- Its sends are like any agent's: they show in the banner and Recent sends as
+  msgblast agent, Stop Agent Sends and the send limits apply, they run one at a
+  time, a repeated `requestId` returns its first result, and nothing is retried.
