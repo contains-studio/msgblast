@@ -128,6 +128,8 @@ final class AppModel: ObservableObject {
         return try self.personalAgent.demo ? self.demoAgentRunner() : self.liveAgentRunner(account, sessionID: sessionID)
     }
     @Published var paneFocus: PaneFocus?
+    /// A Settings page title to open, such as "CLI tools" for Connect with ChatGPT.
+    @Published var settingsPageRequest: String?
     lazy var agentControl = AgentControlListener(directory: local.url.deletingLastPathComponent(), host: self)
     lazy var chatGPT = ChatGPTAccounts(storage: demo ? .memory() : .keychain(service: "com.msgblast.chatgpt.\(Bundle.main.bundleIdentifier ?? "unknown")"))
     lazy var chatGPTConnection = ChatGPTConnection(accounts: chatGPT, demo: demo, model: self)

@@ -12,6 +12,7 @@ struct MsgblastAgentBar: View {
     /// About a third of the window, so the grid stays visible.
     let maxHeight: CGFloat
     @AppStorage("MsgblastAgentBarExpanded") private var expanded = false
+    @Environment(\.openSettings) private var openSettings
     @State private var draft = ""
     private static let tint = Color.purple
 
@@ -111,7 +112,11 @@ struct MsgblastAgentBar: View {
                 Toggle("Use ChatGPT plan", isOn: Binding(get: { agent.conversation.account == .chatGPT }, set: { if $0 { Task { await agent.choose(.chatGPT) } } }))
                 Text(status.email.map { "Connected as \($0)" } ?? "Connected")
             } else {
-                SettingsLink { Text("Connect with ChatGPT…") }
+                Button("Connect with ChatGPT…") {
+                    model.settingsPageRequest = "CLI tools"
+                    NSApp.activate()
+                    openSettings()
+                }
             }
         }
     }
