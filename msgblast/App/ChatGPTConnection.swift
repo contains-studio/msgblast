@@ -26,6 +26,7 @@ import msgblastCore
     }
 
     func load() async {
+        guard !demo else { return }
         do { status = try await accounts.current().flatMap(Self.status) } catch { message = error.localizedDescription }
     }
 
