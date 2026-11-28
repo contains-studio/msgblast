@@ -186,6 +186,7 @@ struct MainView: View {
     @StateObject private var captureLayout = ChatCaptureLayout()
     @State private var selection = DetailSelection.agents
     @State private var showingComparison: Bool
+    @State private var detailHeight: CGFloat = 560
     private var sidebarSelectionColor: Color { Color.primary.opacity(controlActiveState == .inactive ? 0.06 : 0.10) }
     private var sidebarIconColor: Color { controlActiveState == .inactive ? .secondary : .accentColor }
     private var showingAgents: Bool { selection == .agents && !showingComparison }
@@ -272,9 +273,13 @@ struct MainView: View {
                     }.padding(18).background(.bar)
                     }
                 }
+                if model.demo {
+                    MsgblastAgentBar(model: model, agent: model.msgblastAgent, accounts: model.personalAgent, activity: model.agentSendActivity, maxHeight: detailHeight / 3)
+                }
                 StatusBanners(model: model)
                 AgentsWorkspaceView(model: model, web: model.webAgents, showingComparison: $showingComparison, newBlastRequest: model.newBlastRequest, captureLayout: captureLayout)
             }.navigationTitle("")
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { detailHeight = $0 }
             }
         }
         .frame(minWidth: 760, minHeight: 560)

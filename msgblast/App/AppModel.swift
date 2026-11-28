@@ -123,6 +123,10 @@ final class AppModel: ObservableObject {
     let agentSendActivity = AgentControlActivity()
     lazy var agentSends = AgentControlSends(model: self)
     lazy var wants = WantsModel(app: self)
+    lazy var msgblastAgent = MsgblastAgentController(store: MsgblastAgentStore(directory: local.url.deletingLastPathComponent())) { [weak self] _, _ in
+        try self?.demoAgentRunner() ?? DemoAgentRunner(agents: [], comparisonID: UUID())
+    }
+    @Published var paneFocus: PaneFocus?
     lazy var agentControl = AgentControlListener(directory: local.url.deletingLastPathComponent(), host: self)
     lazy var chatGPT = ChatGPTAccounts(storage: demo ? .memory() : .keychain(service: "com.msgblast.chatgpt.\(Bundle.main.bundleIdentifier ?? "unknown")"))
     lazy var chatGPTConnection = ChatGPTConnection(accounts: chatGPT, demo: demo, model: self)
@@ -185,6 +189,15 @@ final class AppModel: ObservableObject {
         if TelemetryCollector.endpoint(demo: demo) != nil {
             telemetryTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in Task { @MainActor in self?.telemetryHeartbeat() } }
         }
+    }
+    /// Demo's msgblast agent summarises the newest chat comparison. Live accounts arrive with the session runners.
+    private func demoAgentRunner() throws -> MsgblastAgentRunner {
+        guard demo else { throw AppFailure.blocked("The msgblast agent is not available in this build yet.") }
+        guard let comparison = state.comparisons.first(where: { !$0.resolvedWebAgentIDs.isEmpty }) else {
+            throw AppFailure.blocked("Send a blast first, then ask the msgblast agent about it.")
+        }
+        let agents = comparison.resolvedWebAgentIDs.map { DemoAgentRunner.Agent(id: $0.gridID.id, name: webAgents.name(for: $0)) }
+        return DemoAgentRunner(agents: agents, comparisonID: comparison.id)
     }
     func save() throws {
         guard !storageLoadFailed else { throw AppFailure.blocked("Saved state is unavailable. It will not be overwritten. You can quit or update after new drafts are saved separately in \(local.url.deletingLastPathComponent().appendingPathComponent("Recovery").path). Repair the saved state before sending.") }

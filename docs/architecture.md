@@ -12,6 +12,7 @@ source](build-from-source.md) and [Testing](testing.md) for runnable commands.
 | Main orchestration | `msgblast/App/AppModel.swift` | Agent selection, Messages refresh, comparison lifecycle, sending, and persistence |
 | Update lifecycle | `msgblast/App/AppUpdater.swift`, `UpdateProbe.swift` | Sparkle configuration and isolated Debug update fixtures |
 | Report orchestration | `msgblast/App/PersonalAgentController.swift` | CLI discovery, report requests, cancellation, and saved reports |
+| msgblast agent | `msgblast/Core/MsgblastAgent*.swift`, `DemoAgentRunner.swift`, `msgblast/Windows/MsgblastAgentBar.swift` | The built-in agent's runner contract, saved conversation, instructions, Demo script, and the bar above the agents (Demo only until the live runners are wired) |
 | Main and comparison UI | `msgblast/Windows/Views.swift`, `RichMessageViews.swift` | Picker, sidebar, conversations, scope, and transcript rendering |
 | Window ownership | `msgblast/Windows/WindowCoordinator.swift` | Joined/separate conversations, report windows, frames, and floating composer |
 | Web/CLI UI | `msgblast/Windows/WebServicesView.swift`, `WebProvider.swift`, `WebAgentSession.swift` in Core | Website panes, native CLI/Bot panes, and provider session state |
@@ -205,6 +206,10 @@ the selected app support folder. Web/CLI providers additionally retain their
 per-provider session files and comparison/session identifiers. Remote control
 adds only `remote-identity.json`, `remote-device.json`, and `remote-settings.json`
 (owner-only); its projection of conversations is derived and never persisted.
+The built-in msgblast agent saves its one conversation, chosen account and CLI
+session id in `msgblast-agent.json` (owner-only). A file it cannot read, or one a
+newer msgblast wrote, disables the agent and is left untouched; an older format is
+copied to `msgblast-agent.v<version>.json` before it is rewritten.
 
 | Build | App support folder |
 | --- | --- |
