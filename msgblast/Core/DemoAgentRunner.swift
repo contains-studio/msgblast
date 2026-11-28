@@ -18,7 +18,7 @@ public final class DemoAgentRunner: MsgblastAgentRunner {
     public var script: [MsgblastAgentEvent] {
         let names = agents.map(\.name).formatted(.list(type: .and))
         let link = "msgblast://comparison/\(comparisonID.uuidString)"
-        let replies = agents.map { "[\($0.name)](\(link)?agent=\($0.id))" }.joined(separator: " · ")
+        let replies = agents.map { "- **[\($0.name)](\(link)?agent=\($0.id))** replied." }.joined(separator: "\n")
         return [
             .tool(name: "msgblast_agents_list", finished: false, failed: false),
             .tool(name: "msgblast_agents_list", finished: true, failed: false),
@@ -29,8 +29,8 @@ public final class DemoAgentRunner: MsgblastAgentRunner {
             .tool(name: "msgblast_blast_wait", finished: true, failed: false),
             .tool(name: "msgblast_comparison_read", finished: false, failed: false),
             .tool(name: "msgblast_comparison_read", finished: true, failed: false),
-            .text("\(names) replied. They agree on comparing clarity, cost and reversibility; one suggests a small trial first.\n\n"
-                + "[Open the comparison](\(link)) · \(replies)\n\nDemo · simulated replies."),
+            .text("They agree on comparing clarity, cost and reversibility; one suggests a small trial first.\n\n"
+                + "\(replies)\n\n[Open the comparison](\(link)) · Demo, simulated replies."),
             .completed(sessionID: "demo-session"),
         ]
     }

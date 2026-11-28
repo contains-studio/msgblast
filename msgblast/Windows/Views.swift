@@ -273,9 +273,7 @@ struct MainView: View {
                     }.padding(18).background(.bar)
                     }
                 }
-                if model.demo {
-                    MsgblastAgentBar(model: model, agent: model.msgblastAgent, accounts: model.personalAgent, activity: model.agentSendActivity, maxHeight: detailHeight / 3)
-                }
+                MsgblastAgentBar(model: model, agent: model.msgblastAgent, accounts: model.personalAgent, activity: model.agentSendActivity, chatGPT: model.chatGPTConnection, maxHeight: detailHeight / 3)
                 StatusBanners(model: model)
                 AgentsWorkspaceView(model: model, web: model.webAgents, showingComparison: $showingComparison, newBlastRequest: model.newBlastRequest, captureLayout: captureLayout)
             }.navigationTitle("")
@@ -899,8 +897,16 @@ struct AppSettingsView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 860, idealWidth: 980, minHeight: 620, idealHeight: 700)
+        .onAppear(perform: showRequestedPage)
+        .onChange(of: model.settingsPageRequest) { _, _ in showRequestedPage() }
         .background(Color(nsColor: .windowBackgroundColor))
         .onChange(of: page) { _, _ in shortcut.cancelRecording() }
+    }
+
+    private func showRequestedPage() {
+        guard let requested = model.settingsPageRequest.flatMap(SettingsPage.init(rawValue:)) else { return }
+        page = requested
+        model.settingsPageRequest = nil
     }
 
     private func sidebarRow(_ item: SettingsPage) -> some View {

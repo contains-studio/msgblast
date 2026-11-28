@@ -38,11 +38,19 @@ import msgblastRemoteProtocol
     /// probe loop does while it is connected, so readiness is current. A repeat returns its stored result.
     func send(_ command: RemoteCommand, client: String, isAuthorized: @MainActor () -> Bool = { true }) async -> RemoteCommandResult {
         let id = command.clientCommandID
-        return await activity.run(command, client: client, isKnown: { self.executor.status(of: id).code != .unknownCommand },
-                                  prepare: { await self.model.remoteAvailabilityProbe(slow: false) }) { command in
+        let result = await activity.run(command, client: client, isKnown: { self.executor.status(of: id).code != .unknownCommand },
+                                        prepare: { await self.model.remoteAvailabilityProbe(slow: false) }) { command in
             guard isAuthorized() else { return .rejected(id, .invalidCommand, "The account or send selection changed.") }
             return await self.executor.execute(command)
         }
+        // The person asked the msgblast agent, so show the comparison its blast or follow-up went to.
+        if client == MsgblastAgent.clientName, result.outcome == .applied, let comparison = result.conversationID {
+            switch command.action {
+            case .createConversation, .sendShared: model.showAgentComparison(comparison)
+            default: break
+            }
+        }
+        return result
     }
 }
 

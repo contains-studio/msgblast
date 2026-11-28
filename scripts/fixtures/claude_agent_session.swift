@@ -31,7 +31,7 @@ import msgblastCore
         guard case .completed(let id) = first.last else { fatalError("first turn did not complete") }
         precondition(first.dropLast() == [.tool(name: "msgblast_agents_list", finished: false, failed: false),
                                           .tool(name: "msgblast_agents_list", finished: true, failed: false),
-                                          .text("Fixture summary"), .text(" of: "), .text("Compare the fixture agents")])
+                                          .text("Fixture summary of: Compare the fixture agents")])
         let stopped = await events(session, "HANG", interruptAfter: .milliseconds(300))
         precondition(stopped.count == 1 && { if case .failed(let text) = stopped[0] { text.hasPrefix("Stopped.") } else { false } }())
         let again = await events(session, "Still running after the interrupt")

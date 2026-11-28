@@ -29,6 +29,9 @@ public actor CodexAgentSession: MsgblastAgentRunner {
     private var nextID = 0, pending: [Int: CheckedContinuation<Message, Error>] = [:], stderrTail = ""
     private var turn: AsyncStream<MsgblastAgentEvent>.Continuation?, turnNumber = 0, turnID: String?
     private var interruptRequested = false, interruptSent = false, wroteText = false, closed = false, opening = false
+    /// Codex sends progress notes and the answer as separate messages. Each is held until it completes:
+    /// commentary is dropped, an answer is shown, and a message without a phase is kept only if it comes last.
+    private var drafts: [String: String] = [:], lastDraft: String?, unphased: String?
 
     /// `codexHome` and `launchConfig` (extra `-c` overrides) select a managed login; without them Codex uses `codex login`.
     /// `sessionID` resumes a saved conversation.
@@ -84,6 +87,7 @@ public actor CodexAgentSession: MsgblastAgentRunner {
         turnNumber += 1
         let number = turnNumber
         turn = continuation; turnID = nil; interruptRequested = false; interruptSent = false; wroteText = false
+        drafts = [:]; lastDraft = nil; unphased = nil
         do {
             if process == nil {
                 do { try await open() } catch { shutDown(nil); throw error }
@@ -230,20 +234,44 @@ public actor CodexAgentSession: MsgblastAgentRunner {
             turnID = (params["turn"] as? [String: Any])?["id"] as? String
             if interruptRequested { sendInterrupt() }
         case "item/agentMessage/delta":
-            guard let delta = params["delta"] as? String else { return }
-            wroteText = true
-            turn?.yield(.text(delta))
-        case "item/started" where item["type"] as? String == "agentMessage" && wroteText:
-            turn?.yield(.text("\n\n"))
+            guard let delta = params["delta"] as? String, let id = params["itemId"] as? String else { return }
+            drafts[id, default: ""] += delta
+            lastDraft = id
+        case "item/completed" where item["type"] as? String == "agentMessage":
+            completeMessage(item)
         case "item/started", "item/completed":
             guard item["type"] as? String == "mcpToolCall", let tool = item["tool"] as? String else { return }
             turn?.yield(.tool(name: tool, finished: method == "item/completed", failed: item["status"] as? String == "failed"))
         case "turn/completed":
+            writeLastUnphased()
             let completed = params["turn"] as? [String: Any] ?? [:], error = completed["error"] as? [String: Any]
             finishTurn(completed["status"] as? String == "failed"
                        ? .failed(error?["message"] as? String ?? "Codex couldn't finish the reply.") : .completed(sessionID: threadID))
         default: break
         }
+    }
+
+    private func completeMessage(_ item: [String: Any]) {
+        let id = item["id"] as? String ?? ""
+        let text = (item["text"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? drafts[id] ?? ""
+        drafts[id] = nil
+        if lastDraft == id { lastDraft = nil }
+        switch item["phase"] as? String {
+        case "commentary": unphased = nil
+        case "final_answer", "partial_answer": unphased = nil; write(text)
+        default: unphased = text
+        }
+    }
+
+    private func writeLastUnphased() {
+        if let text = unphased ?? lastDraft.flatMap({ drafts[$0] }) { write(text) }
+    }
+
+    private func write(_ text: String) {
+        guard !text.isEmpty else { return }
+        if wroteText { turn?.yield(.text("\n\n")) }
+        wroteText = true
+        turn?.yield(.text(text))
     }
 
     /// Asks Codex once per turn to stop. The turn still ends with `turn/completed`, so the answer isn't awaited.

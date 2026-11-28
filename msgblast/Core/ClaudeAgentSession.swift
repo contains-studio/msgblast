@@ -18,6 +18,8 @@ public final class ClaudeAgentSession: MsgblastAgentRunner, @unchecked Sendable 
     private var lastOutput = Date()
     private var pending = Data()
     private var tools: [String: String] = [:]
+    /// Text since the last tool call. Text before a tool call is a progress note, so only what follows the last one is the answer.
+    private var answer = ""
 
     public static func start(using agent: InstalledPersonalAgent, msgblastExecutable: String, sessionKey: String,
                              instructions: String, resuming sessionID: String? = nil, workingDirectory: URL,
@@ -87,7 +89,7 @@ public final class ClaudeAgentSession: MsgblastAgentRunner, @unchecked Sendable 
             let refusal: String? = lock.withLock {
                 if let ended { return ended }
                 if turn != nil { return "Claude Code is still answering the previous request." }
-                turn = continuation; interrupted = false; lastOutput = Date()
+                turn = continuation; interrupted = false; lastOutput = Date(); answer = ""
                 return nil
             }
             if let refusal { continuation.yield(.failed(refusal)); continuation.finish(); return }
@@ -180,12 +182,12 @@ public final class ClaudeAgentSession: MsgblastAgentRunner, @unchecked Sendable 
 
     private func stream(_ event: [String: Any]) {
         if let delta = event["delta"] as? [String: Any], delta["type"] as? String == "text_delta", let text = delta["text"] as? String {
-            yield(.text(text))
+            lock.withLock { answer += text }
         }
         guard let block = event["content_block"] as? [String: Any], block["type"] as? String == "tool_use",
               let id = block["id"] as? String, let name = block["name"] as? String else { return }
         let tool = name.hasPrefix(Self.toolPrefix) ? String(name.dropFirst(Self.toolPrefix.count)) : name
-        lock.withLock { tools[id] = tool }
+        lock.withLock { tools[id] = tool; answer = "" }
         yield(.tool(name: tool, finished: false, failed: false))
     }
 
@@ -198,6 +200,8 @@ public final class ClaudeAgentSession: MsgblastAgentRunner, @unchecked Sendable 
 
     private func result(_ object: [String: Any]) {
         if object["is_error"] as? Bool == false, let id = object["session_id"] as? String, UUID(uuidString: id) != nil {
+            let text = lock.withLock { answer }.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty { yield(.text(text)) }
             finish(.completed(sessionID: id))
         } else if lock.withLock({ interrupted }) {
             finish(.failed("Stopped. Claude Code may have finished some tool calls before it stopped."))
@@ -219,7 +223,7 @@ public final class ClaudeAgentSession: MsgblastAgentRunner, @unchecked Sendable 
 
     private func finish(_ event: MsgblastAgentEvent, ending: String? = nil) {
         let current = lock.withLock {
-            defer { turn = nil; tools = [:] }
+            defer { turn = nil; tools = [:]; answer = "" }
             if ended == nil { ended = ending }
             return turn
         }

@@ -122,6 +122,21 @@ is not saved.
 
 ## The built-in msgblast agent
 
+Ask it from the bar above the agents (✦ Ask msgblast agent…). Choose its account in
+the bar's menu:
+
+- **Claude Code:** the Claude Code installed on this Mac and its own login.
+  **Sign in to Claude Code…** opens `claude auth login` in Terminal.
+- **ChatGPT · Codex:** Codex with its own `codex login`.
+- **ChatGPT plan:** Connect with ChatGPT in Settings. Codex uses that plan
+  through msgblast, without `~/.codex/auth.json`.
+
+The agent answers in the bar and the other agents answer in the grid. Its links
+open a comparison and scroll to the agent they name. **Stop** ends the turn and
+its session key; the next question resumes the same conversation with a new key.
+Switching account starts a new conversation with that account's CLI. The
+conversation is saved in `msgblast-agent.json` in the app support folder.
+
 msgblast's own agent reaches the same tools through `msgblast mcp`, with a
 session key instead of an approval. msgblast issues a key when a conversation
 with the agent starts and revokes it when the conversation ends; the agent's

@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import msgblastCore
 
@@ -91,6 +92,22 @@ final class MsgblastAgentTests: XCTestCase {
         XCTAssertTrue(controller.isWorking)
         await controller.stop()
         XCTAssertEqual(controller.status, .idle)
+        XCTAssertEqual(controller.conversation.messages.last?.note, true)
+        XCTAssertNotNil(controller.conversation.messages.last?.created)
+        XCTAssertEqual(controller.conversation.messages.map(\.role), [.person, .agent])
+    }
+
+    func testRepliesRenderMarkdownListsHeadingsAndLinks() {
+        let link = "msgblast://comparison/\(UUID().uuidString)"
+        let text = MsgblastAgentText.render("## Summary\n- **Codex** agrees\n  - nested\n2. [Open](\(link))\nPlain - not a list")
+        XCTAssertEqual(text.string, "Summary\n•\tCodex agrees\n•\tnested\n2.\tOpen\nPlain - not a list")
+        let codex = (text.string as NSString).range(of: "Codex")
+        let font = text.attribute(.font, at: codex.location, effectiveRange: nil) as? NSFont
+        XCTAssertTrue(font?.fontDescriptor.symbolicTraits.contains(.bold) == true)
+        let open = (text.string as NSString).range(of: "Open")
+        XCTAssertEqual((text.attribute(.link, at: open.location, effectiveRange: nil) as? URL)?.absoluteString, link)
+        let nested = (text.attribute(.paragraphStyle, at: (text.string as NSString).range(of: "nested").location, effectiveRange: nil) as? NSParagraphStyle)
+        XCTAssertGreaterThan(nested?.firstLineHeadIndent ?? 0, 0)
     }
 
     func testDemoScriptLinksTheComparisonAndCompletes() {

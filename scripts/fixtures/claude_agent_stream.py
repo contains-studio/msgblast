@@ -74,7 +74,10 @@ for line in sys.stdin:
         emit({'type': 'result', 'subtype': 'error_during_execution', 'is_error': True, 'errors': []})
     else:
         init()
-        stream({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'tool_use', 'id': 'toolu_1', 'name': 'mcp__msgblast__msgblast_agents_list', 'input': {}}})
+        # A progress note before the tool call, which msgblast leaves out of the answer.
+        stream({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})
+        stream({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': "I'll check your agents."}})
+        stream({'type': 'content_block_start', 'index': 1, 'content_block': {'type': 'tool_use', 'id': 'toolu_1', 'name': 'mcp__msgblast__msgblast_agents_list', 'input': {}}})
         emit({'type': 'user', 'message': {'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': 'toolu_1', 'is_error': False, 'content': '[]'}]}})
         stream({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})
         for part in ['Fixture summary', ' of: ', text]:

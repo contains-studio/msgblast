@@ -8,9 +8,11 @@ struct MsgblastAgentBar: View {
     @ObservedObject var agent: MsgblastAgentController
     @ObservedObject var accounts: PersonalAgentController
     @ObservedObject var activity: AgentControlActivity
+    @ObservedObject var chatGPT: ChatGPTConnection
     /// About a third of the window, so the grid stays visible.
     let maxHeight: CGFloat
     @AppStorage("MsgblastAgentBarExpanded") private var expanded = false
+    @Environment(\.openSettings) private var openSettings
     @State private var draft = ""
     private static let tint = Color.purple
 
@@ -21,7 +23,7 @@ struct MsgblastAgentBar: View {
         }
         .background(Self.tint.opacity(0.06)).background(.bar)
         .overlay(alignment: .bottom) { Divider() }
-        .task { await accounts.discover(); await accounts.refreshAccounts() }
+        .task { await accounts.discover(); await accounts.refreshAccounts(); await chatGPT.load() }
     }
 
     private var inputRow: some View {
@@ -58,7 +60,7 @@ struct MsgblastAgentBar: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     ForEach(agent.conversation.messages.suffix(40)) { message in
-                        LinkedText(text: Self.markdown(message.text), person: message.role == .person, open: open)
+                        LinkedText(message: message, open: open)
                             .id(message.id)
                     }
                 }.padding(.horizontal, 18).padding(.bottom, 12)
@@ -74,6 +76,7 @@ struct MsgblastAgentBar: View {
         Menu {
             accountSection(.claude, provider: .claude, name: "Claude Code")
             accountSection(.codexLogin, provider: .codex, name: "ChatGPT · Codex")
+            chatGPTSection
         } label: {
             Text(accountName(agent.conversation.account) ?? "Choose account")
         }
@@ -101,10 +104,28 @@ struct MsgblastAgentBar: View {
         }
     }
 
+    /// Connect with ChatGPT: the plan connected in Settings, run through Codex without `codex login`.
+    @ViewBuilder
+    private var chatGPTSection: some View {
+        Section("ChatGPT plan") {
+            if let status = chatGPT.status, status.sharesPlan {
+                Toggle("Use ChatGPT plan", isOn: Binding(get: { agent.conversation.account == .chatGPT }, set: { if $0 { Task { await agent.choose(.chatGPT) } } }))
+                Text(status.email.map { "Connected as \($0)" } ?? "Connected")
+            } else {
+                Button("Connect with ChatGPT…") {
+                    model.settingsPageRequest = "CLI tools"
+                    NSApp.activate()
+                    openSettings()
+                }
+            }
+        }
+    }
+
     private func accountName(_ account: MsgblastAgentAccount?) -> String? {
         switch account {
         case .claude: "Claude Code"
-        case .codexLogin, .chatGPT: "ChatGPT"
+        case .codexLogin: "ChatGPT · Codex"
+        case .chatGPT: "ChatGPT plan"
         case nil: nil
         }
     }
@@ -137,6 +158,7 @@ struct MsgblastAgentBar: View {
     private func open(_ url: URL) {
         guard url.scheme == "msgblast" else { if url.scheme == "https" { NSWorkspace.shared.open(url) }; return }
         guard url.host == "comparison", let id = UUID(uuidString: url.lastPathComponent), model.comparison(id) != nil else { return }
+        model.keepsWindowFrame = id
         model.coordinator?.open(id)
         let agentID = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "agent" }?.value
         if let pane = model.webAgents.sessions.first(where: { $0.id.gridID.id == agentID }) {
@@ -144,15 +166,11 @@ struct MsgblastAgentBar: View {
         }
     }
 
-    private static func markdown(_ text: String) -> AttributedString {
-        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
-    }
 }
 
 /// Message text whose links come to `open` instead of the system, so msgblast links never leave the app.
 private struct LinkedText: NSViewRepresentable {
-    let text: AttributedString
-    let person: Bool
+    let message: MsgblastAgentMessage
     let open: (URL) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -167,10 +185,16 @@ private struct LinkedText: NSViewRepresentable {
     }
     func updateNSView(_ view: NSTextView, context: Context) {
         context.coordinator.open = open
-        let styled = NSMutableAttributedString(text)
-        let range = NSRange(location: 0, length: styled.length)
-        styled.addAttributes([.font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: person ? .semibold : .regular),
-                              .foregroundColor: person ? NSColor.secondaryLabelColor : NSColor.labelColor], range: range)
+        let styled: NSAttributedString
+        if message.note == true {
+            styled = NSAttributedString(string: message.text, attributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+                                                                            .foregroundColor: NSColor.tertiaryLabelColor])
+        } else if message.role == .person {
+            styled = MsgblastAgentText.render(message.text, color: .secondaryLabelColor, weight: .semibold)
+        } else {
+            styled = MsgblastAgentText.render(message.text)
+        }
+        guard view.textStorage?.isEqual(to: styled) != true else { return }
         view.textStorage?.setAttributedString(styled)
     }
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: NSTextView, context: Context) -> CGSize? {
