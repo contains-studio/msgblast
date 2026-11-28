@@ -3,7 +3,7 @@ import LocalAuthentication
 import Security
 
 /// The ChatGPT accounts this build has signed in, in the Keychain: one item per registration and an
-/// index with this Mac's host id and the active account.
+/// index with this Mac's host id and the active account. Only this actor refreshes tokens, one at a time.
 public actor ChatGPTAccounts {
     public struct Storage: Sendable {
         public var read: @Sendable (String) throws -> Data?
@@ -17,6 +17,9 @@ public actor ChatGPTAccounts {
 
     private let storage: Storage, session: URLSession, now: @Sendable () -> Date
     private var server: ChatGPTTokenSharing.Server?
+    /// Rotated tokens that could not be saved yet. The old refresh token no longer works.
+    private var unsaved: [String: ChatGPTRegistration] = [:]
+    private var refreshing: [String: Task<ChatGPTRegistration, Error>] = [:]
 
     public init(storage: Storage, session: URLSession = .shared, now: @escaping @Sendable () -> Date = Date.init) {
         self.storage = storage; self.session = session; self.now = now
@@ -56,7 +59,72 @@ public actor ChatGPTAccounts {
         guard expected == nil || expected == identity.subject else { throw ChatGPTSignInError.differentAccount }
         let account = ChatGPTRegistration(clientID: clientID, subject: identity.subject, email: identity.email, tokens: tokens)
         try save(account)
+        unsaved[clientID] = nil
         return account
+    }
+
+    /// A current access token for the active account, refreshed when it is about to expire.
+    public func accessToken() async throws -> String {
+        guard let account = try current(), let tokens = account.tokens else { throw ChatGPTSignInError.signedOut }
+        guard account.sharesPlan else { throw ChatGPTSignInError.sharingOff }
+        let date = now()
+        if tokens.expiresAt.timeIntervalSince(date) > 60 { return tokens.accessToken }
+        if let earliest = tokens.earliestRefreshAt, earliest > date {
+            guard tokens.expiresAt > date else { throw ChatGPTSignInError.notYet }
+            return tokens.accessToken
+        }
+        let task = refreshing[account.clientID] ?? Task { try await refresh(account) }
+        refreshing[account.clientID] = task
+        defer { refreshing[account.clientID] = nil }
+        guard let fresh = try await task.value.tokens, fresh.scopes.contains(ChatGPTTokenSharing.sharingScope) else { throw ChatGPTSignInError.sharingOff }
+        return fresh.accessToken
+    }
+
+    private func refresh(_ account: ChatGPTRegistration) async throws -> ChatGPTRegistration {
+        guard let tokens = account.tokens, let refreshToken = tokens.refreshToken else { throw clear(account, ChatGPTSignInError.expired) }
+        let form = ["grant_type": "refresh_token", "client_id": account.clientID, "refresh_token": refreshToken, "resource": ChatGPTTokenSharing.resource]
+        guard let (status, json) = await ChatGPTTokenSharing.post(try await endpoints().tokenEndpoint, form, session: session) else { throw ChatGPTSignInError.unavailable }
+        guard status == 200 else {
+            let error = json["error"] as? String ?? ""
+            if ChatGPTTokenSharing.terminalRefreshErrors.contains(error) { throw clear(account, ChatGPTSignInError.expired) }
+            throw error == "invalid_client" ? ChatGPTSignInError.rejectedClient : .unavailable
+        }
+        guard let next = ChatGPTTokenSharing.tokens(json, now: now(), previous: tokens) else { throw ChatGPTSignInError.unavailable }
+        var renewed = account
+        renewed.tokens = next
+        unsaved[account.clientID] = renewed
+        if (try? save(renewed)) != nil { unsaved[account.clientID] = nil }
+        return renewed
+    }
+
+    /// Revokes the refresh token and forgets the tokens, keeping the account's client id.
+    /// Returns false when OpenAI did not confirm the revocation, so the person can disconnect in ChatGPT Settings.
+    public func disconnect() async throws -> Bool {
+        guard let account = try current() else { return true }
+        _ = try? await refreshing[account.clientID]?.value
+        let latest = try registration(account.clientID) ?? account
+        var confirmed = latest.tokens?.refreshToken == nil
+        if let token = latest.tokens?.refreshToken, let endpoint = try? await endpoints().revocationEndpoint {
+            let form = ["token": token, "token_type_hint": "refresh_token", "client_id": account.clientID]
+            for delay in [0.25, 1, 0] {
+                let status = await ChatGPTTokenSharing.post(endpoint, form, session: session)?.0
+                confirmed = status == 200
+                guard !confirmed, (status ?? 500) >= 500, delay > 0 else { break }
+                try? await Task.sleep(for: .seconds(delay))
+            }
+        }
+        var signedOut = latest
+        signedOut.tokens = nil
+        try save(signedOut)
+        unsaved[account.clientID] = nil
+        return confirmed
+    }
+
+    private func clear(_ account: ChatGPTRegistration, _ error: ChatGPTSignInError) -> ChatGPTSignInError {
+        var cleared = account
+        cleared.tokens = nil
+        unsaved[account.clientID] = nil
+        return (try? save(cleared)) == nil ? .storage : error
     }
 
     private func verify(_ idToken: String, clientID: String, nonce: String, server: ChatGPTTokenSharing.Server) async throws -> ChatGPTIDToken.Identity {
@@ -90,6 +158,7 @@ public actor ChatGPTAccounts {
     }
 
     private func registration(_ clientID: String) throws -> ChatGPTRegistration? {
+        if let pending = unsaved[clientID] { return pending }
         guard let data = try storage.read("registration." + clientID) else { return nil }
         guard let account = try? JSONDecoder().decode(ChatGPTRegistration.self, from: data), account.clientID == clientID else { throw ChatGPTSignInError.storage }
         return account

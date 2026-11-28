@@ -7,6 +7,7 @@ final class ChatGPTTokenSharingTests: XCTestCase {
     private let fixture = ChatGPTFixtureKey()
     private var requests: [(path: String, form: [String: String])] = []
     private var tokenReplies: [(Int, [String: Any])] = []
+    private var revokeStatuses: [Int] = []
     private var saved: [String: Data] = [:]
     private var clock = Date(timeIntervalSince1970: 2_000_000_000)
 
@@ -32,6 +33,8 @@ final class ChatGPTTokenSharingTests: XCTestCase {
                               "revocation_endpoint": "https://auth.openai.com/api/accounts/oauth/revoke"])
         case "/.well-known/jwks.json":
             return json(200, ["keys": [fixture.jwk]])
+        case "/api/accounts/oauth/revoke":
+            return (revokeStatuses.isEmpty ? 200 : revokeStatuses.removeFirst(), [:], Data())
         default:
             let (status, body) = tokenReplies.removeFirst()
             return json(status, body)
@@ -123,6 +126,67 @@ final class ChatGPTTokenSharingTests: XCTestCase {
         } catch { XCTAssertEqual(error as? ChatGPTSignInError, .differentAccount) }
         let current = try await accounts.current()
         XCTAssertEqual(current, first)
+    }
+
+    @MainActor func testDeclinedPlanUsageAsksForConsentOnTheNextSignIn() async throws {
+        let accounts = accounts()
+        let (account, _) = try await signIn(accounts) { sent in
+            tokenReplies = [(200, tokens(idToken(audience: "oaiapp_1", nonce: sent["nonce"]!), scope: "openid profile email offline_access"))]
+            return "code=c&state=\(sent["state"]!)&client_id=oaiapp_1"
+        }
+        XCTAssertFalse(account.sharesPlan)
+        do { _ = try await accounts.accessToken(); XCTFail() } catch { XCTAssertEqual(error as? ChatGPTSignInError, .sharingOff) }
+        let (url, _) = try await accounts.signInURL(redirect: URL(string: "http://127.0.0.1:1/auth/callback")!)
+        XCTAssertEqual(query(url)["prompt"], "consent")
+    }
+
+    @MainActor func testRefreshesOnceAndRotatesTheRefreshToken() async throws {
+        let accounts = accounts()
+        _ = try await signIn(accounts) { sent in
+            tokenReplies = [(200, tokens(idToken(audience: "oaiapp_1", nonce: sent["nonce"]!)))]
+            return "code=c&state=\(sent["state"]!)&client_id=oaiapp_1"
+        }
+        let early = try await accounts.accessToken()
+        XCTAssertEqual(early, "a-r1")
+        clock += 3590
+        tokenReplies = [(200, tokens("ignored", refresh: "r2"))]
+        async let one = accounts.accessToken()
+        async let two = accounts.accessToken()
+        let both = try await [one, two]
+        XCTAssertEqual(both, ["a-r2", "a-r2"])
+        let refreshes = requests.filter { $0.form["grant_type"] == "refresh_token" }
+        XCTAssertEqual(refreshes.map { $0.form["refresh_token"] }, ["r1"])
+        XCTAssertEqual(refreshes.first?.form["client_id"], "oaiapp_1")
+        let stored = try await accounts.current()
+        XCTAssertEqual(stored?.tokens?.refreshToken, "r2")
+        XCTAssertNotEqual(stored?.tokens?.idToken, "ignored")
+
+        clock += 3590
+        tokenReplies = [(400, ["error": "refresh_token_reused"])]
+        do { _ = try await accounts.accessToken(); XCTFail() } catch { XCTAssertEqual(error as? ChatGPTSignInError, .expired) }
+        let cleared = try await accounts.current()
+        XCTAssertNil(cleared?.tokens)
+        XCTAssertEqual(cleared?.clientID, "oaiapp_1")
+    }
+
+    @MainActor func testDisconnectRevokesTheRefreshTokenAndKeepsTheClient() async throws {
+        let accounts = accounts()
+        _ = try await signIn(accounts) { sent in
+            tokenReplies = [(200, tokens(idToken(audience: "oaiapp_1", nonce: sent["nonce"]!)))]
+            return "code=c&state=\(sent["state"]!)&client_id=oaiapp_1"
+        }
+        revokeStatuses = [503, 200]
+        let confirmed = try await accounts.disconnect()
+        XCTAssertTrue(confirmed)
+        let revokes = requests.filter { $0.path == "/api/accounts/oauth/revoke" }
+        XCTAssertEqual(revokes.count, 2)
+        XCTAssertEqual(revokes.last?.form, ["token": "r1", "token_type_hint": "refresh_token", "client_id": "oaiapp_1"])
+        let current = try await accounts.current()
+        XCTAssertNil(current?.tokens)
+        let (url, _) = try await accounts.signInURL(redirect: URL(string: "http://127.0.0.1:1/auth/callback")!)
+        XCTAssertEqual(query(url)["client_id"], "oaiapp_1")
+        XCTAssertNil(query(url)["id_token_hint"], "no ID token hint after signing out")
+        XCTAssertFalse(saved.values.contains { String(decoding: $0, as: UTF8.self).contains("r1") }, "no token is kept after disconnecting")
     }
 
     /// An ad-hoc signed copy gets -34018 on every Keychain write: showing Settings must still work, and

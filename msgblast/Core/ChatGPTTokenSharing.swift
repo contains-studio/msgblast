@@ -21,7 +21,7 @@ public struct ChatGPTRegistration: Codable, Equatable, Sendable {
 }
 
 public enum ChatGPTSignInError: LocalizedError, Equatable, Sendable {
-    case unavailable, declined, unverified, incomplete, codeExpired, differentAccount, rejectedClient, storage, storageUnavailable
+    case unavailable, declined, unverified, incomplete, codeExpired, differentAccount, signedOut, sharingOff, expired, notYet, rejectedClient, storage, storageUnavailable
     public var errorDescription: String? {
         switch self {
         case .unavailable: "ChatGPT sign-in is unavailable right now. Try again."
@@ -30,6 +30,10 @@ public enum ChatGPTSignInError: LocalizedError, Equatable, Sendable {
         case .incomplete: "ChatGPT sign-in did not finish. Start again."
         case .codeExpired: "This sign-in expired. Start again."
         case .differentAccount: "That is a different ChatGPT account. Your saved connection is unchanged."
+        case .signedOut: "Connect with ChatGPT in Settings first."
+        case .sharingOff: "ChatGPT plan usage is off for msgblast. Connect again and allow it."
+        case .expired: "Your ChatGPT connection ended. Connect again."
+        case .notYet: "ChatGPT cannot renew this connection yet. Try again shortly."
         case .rejectedClient: "OpenAI rejected msgblast's registration. Connect again."
         case .storage: "The ChatGPT connection could not be read or saved securely."
         case .storageUnavailable: "This copy of msgblast can’t save a ChatGPT connection. Sign in to Codex CLI above instead."
@@ -133,4 +137,6 @@ public enum ChatGPTTokenSharing {
                      expiresAt: now.addingTimeInterval(lifetime), earliestRefreshAt: earliest, scopes: scope.split(separator: " ").map(String.init))
     }
 
+    static let terminalRefreshErrors: Set<String> = ["invalid_grant", "invalid_refresh_token", "token_expired", "refresh_token_expired",
+                                                     "refresh_token_invalidated", "refresh_token_reused"]
 }
