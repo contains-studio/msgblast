@@ -99,32 +99,46 @@ public enum AgentControlWire {
             return reply(nil, error: "invalidRequest", "Each line must be one JSON object.")
         }
         let id = request["id"]
-        let client: String, access: AgentControlAccess, keyLive: @MainActor () -> Bool
-        if let key = request["sessionKey"] {
-            guard let key = key as? String, let sessionKeys, sessionKeys.isLive(key) else {
-                return reply(id, error: "notApproved", "This msgblast agent session has ended. Nothing was run.")
-            }
-            (client, access, keyLive) = (MsgblastAgent.clientName, .full, { sessionKeys.isLive(key) })
-        } else {
-            guard let name = (request["client"] as? String).flatMap(AgentControlGate.clientName) else {
-                return reply(id, error: "invalidRequest", "Name the agent in \"client\", in 80 characters or fewer.")
-            }
-            guard !isReserved(name) else {
-                return reply(id, error: "notApproved", "\(MsgblastAgent.clientName) is the name of msgblast’s own agent. Use another name.")
-            }
-            guard outsideAgents else { return reply(id, error: "unavailable", AgentControlCLI.unavailable) }
-            guard let level = await gate.access(for: name, approve: approve) else {
-                return reply(id, error: "notApproved", notApproved(name, gate: gate))
-            }
-            (client, access, keyLive) = (name, level, { true })
+        let caller: Caller
+        switch await Self.caller(request, gate: gate, approve: approve, sessionKeys: sessionKeys, outsideAgents: outsideAgents) {
+        case .success(let found): caller = found
+        case .failure(let refusal): return reply(id, error: refusal.code, refusal.message)
         }
-        guard isLive(), keyLive() else { return reply(id, error: "unavailable", "msgblast closed this session, because Outside agents was switched off or its key changed. Nothing was run.") }
+        let (client, access) = (caller.client, caller.access)
+        guard isLive(), caller.isLive() else { return reply(id, error: "unavailable", "msgblast closed this session, because Outside agents was switched off or its key changed. Nothing was run.") }
         let agentsOnly = client == MsgblastAgent.clientName
         switch request["method"] as? String {
         case "tools/list": return reply(id, result: ["tools": toolList(access)])
         case "tools/call": return await call(request, id: id, access: access, host: host, client: client, agentsOnly: agentsOnly)
         default: return reply(id, error: "invalidRequest", "Unknown method. Use tools/list or tools/call.")
         }
+    }
+
+    private struct Caller {
+        let client: String, access: AgentControlAccess, isLive: @MainActor () -> Bool
+    }
+    private struct Refusal: Error { let code, message: String }
+
+    /// Who is asking: the msgblast agent by its live key, or an outside agent the person approved.
+    @MainActor private static func caller(_ request: [String: Any], gate: AgentControlGate, approve: @escaping AgentControlGate.Approve,
+                                          sessionKeys: AgentSessionKeys?, outsideAgents: Bool) async -> Result<Caller, Refusal> {
+        if let key = request["sessionKey"] {
+            guard let key = key as? String, let sessionKeys, sessionKeys.isLive(key) else {
+                return .failure(Refusal(code: "notApproved", message: "This msgblast agent session has ended. Nothing was run."))
+            }
+            return .success(Caller(client: MsgblastAgent.clientName, access: .full, isLive: { sessionKeys.isLive(key) }))
+        }
+        guard let name = (request["client"] as? String).flatMap(AgentControlGate.clientName) else {
+            return .failure(Refusal(code: "invalidRequest", message: "Name the agent in \"client\", in 80 characters or fewer."))
+        }
+        guard !isReserved(name) else {
+            return .failure(Refusal(code: "notApproved", message: "\(MsgblastAgent.clientName) is the name of msgblast’s own agent. Use another name."))
+        }
+        guard outsideAgents else { return .failure(Refusal(code: "unavailable", message: AgentControlCLI.unavailable)) }
+        guard let level = await gate.access(for: name, approve: approve) else {
+            return .failure(Refusal(code: "notApproved", message: notApproved(name, gate: gate)))
+        }
+        return .success(Caller(client: name, access: level, isLive: { true }))
     }
 
     /// Whether the line carries a session key, so the socket can tell the built-in agent's requests from others'.
