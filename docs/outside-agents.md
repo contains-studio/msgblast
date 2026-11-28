@@ -178,3 +178,32 @@ stream-json:
 
 It needs Claude Code 2.1.259 or later. Older versions get the same update message
 as configured CLI conversations.
+
+## The msgblast agent on Codex
+
+The built-in msgblast agent can think with the person's Codex account.
+`CodexAgentSession` in `msgblast/Core/CodexAgentSession.swift` runs the installed
+`codex app-server` and speaks its JSON-RPC over stdio (protocol from
+`codex app-server generate-json-schema`, codex-cli 0.172.0). It uses the existing
+`codex login` unless the caller passes a managed `CODEX_HOME` and launch `-c`
+overrides; with a managed home, `OPENAI_API_KEY` is removed from Codex's environment.
+
+Each conversation is a Codex thread with:
+
+- msgblast's MCP server as `mcp_servers.msgblast`, with its tools pre-approved.
+  The session key goes in the JSON-RPC thread config, never in arguments, so it
+  doesn't show in `ps`. Every other MCP server in the person's Codex config is turned off.
+- No shell, file, image, web search, browser, computer use, subagent, app, plugin
+  or hook tools, a read-only sandbox, and an approval policy that never prompts.
+- An empty owner-only working folder, removed when the session closes.
+
+If Codex asks to approve a tool, only tools on the `msgblast` server are approved;
+other approvals, input requests and elicitations are declined. Turns have no time
+limit, nothing is retried, and Stop uses the protocol's `turn/interrupt`. A
+saved thread ID resumes the conversation with `thread/resume`. Closing the
+session ends Codex's whole process group. A Codex without `app-server` gets a
+message to update Codex.
+
+`CodexAgentSessionTests` runs the real session against
+`scripts/fixtures/codex_app_server.py`, a recorded app-server with no account or
+network.
