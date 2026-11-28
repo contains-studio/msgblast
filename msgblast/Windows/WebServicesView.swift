@@ -22,6 +22,9 @@ struct AgentsWorkspaceView: View {
     @State private var hiddenMembers: Set<UUID> = []
     @State private var hiddenWebAgents: Set<WebAgentID> = []
     @State private var requestedAgents: Set<WebAgentID> = []
+    /// While the msgblast agent is open over this view, its grid and columns' controls are hidden too.
+    @AppStorage(MsgblastAgentLayout.expandedKey) private var agentExpanded = false
+    private var hiddenByAgent: Bool { agentExpanded && windowComparisonID == nil }
     private var sending: Bool { model.busy || model.webBroadcastBusy || web.sessions.contains { $0.isSending } }
     private var canUseOtherRecipients: Bool {
         !model.busy && model.webBroadcastBusy && model.webBroadcastReplyGate.canBrowseWhileWaiting &&
@@ -102,12 +105,12 @@ struct AgentsWorkspaceView: View {
         }
         .onChange(of: showingComparison) { _, value in if value { editingAgents = false } }
         .toolbar {
-            if showingComparison {
+            if showingComparison && !hiddenByAgent {
                 ToolbarItem(placement: .primaryAction) {
                     ChatShareButton(title: nativeComparison?.title ?? "Chat", captureLayout: captureLayout)
                 }
             }
-            if !showingComparison {
+            if !showingComparison && !hiddenByAgent {
                 ToolbarItem(placement: .primaryAction) {
                     Button(editingAgents ? "Done" : "Edit") { editingAgents.toggle() }
                         .accessibilityLabel(editingAgents ? "Done editing agents" : "Edit agents")

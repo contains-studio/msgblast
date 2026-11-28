@@ -122,7 +122,7 @@ is not saved.
 
 ## The built-in msgblast agent
 
-Ask it from the bar above the agents (✦ Ask msgblast agent…). Choose its account in
+Ask it from the bar above the agents (✦ Message msgblast agent). Choose its account in
 the bar's menu:
 
 - **Claude Code:** the Claude Code installed on this Mac and its own login.
@@ -131,8 +131,13 @@ the bar's menu:
 - **ChatGPT plan:** Connect with ChatGPT in Settings. Codex uses that plan
   through msgblast, without `~/.codex/auth.json`.
 
-The agent answers in the bar and the other agents answer in the grid. Its links
-open a comparison and scroll to the agent they name. **Stop** ends the turn and
+The other agents answer in the grid. Collapsed, the bar shows what the agent is
+doing and its newest reply, and a blast it starts opens its comparison. Expand it
+(the arrows, or View → msgblast Agent, ⌘4) for the whole conversation in place of
+the grid, like Messages: your messages on the right, the agent's on the left, and
+steps such as "Sent to Codex CLI and Claude Code" as quiet lines between them. A
+comparison it mentions shows as a card with its agents and reply count; tapping the
+card, or an agent's name, collapses the conversation and opens that comparison. **Stop** ends the turn and
 its session key; the next question resumes the same conversation with a new key.
 Switching account starts a new conversation with that account's CLI. The
 conversation is saved in `msgblast-agent.json` in the app support folder.

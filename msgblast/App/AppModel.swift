@@ -197,7 +197,9 @@ final class AppModel: ObservableObject {
     }
     /// Shows a comparison the msgblast agent started or followed up, as New Blast does, without resizing the window.
     func showAgentComparison(_ id: UUID) {
-        guard comparison(id)?.resolvedWebAgentIDs.isEmpty == false else { return }
+        // While the person is in the open msgblast agent, they stay in the conversation.
+        guard comparison(id)?.resolvedWebAgentIDs.isEmpty == false,
+              !UserDefaults.standard.bool(forKey: MsgblastAgentLayout.expandedKey) else { return }
         keepsWindowFrame = id
         if webAgents.comparisonID == id { webComparisonRequest = UUID() } else { openWebComparison(id) }
     }
