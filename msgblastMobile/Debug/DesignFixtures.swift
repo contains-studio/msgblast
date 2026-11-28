@@ -116,6 +116,7 @@ enum DesignFixtures {
         func at(_ minutes: Double) -> Date { now.addingTimeInterval(-minutes * 60) }
         var messages = [
             RemoteAgentMessage(id: UUID(), fromPerson: true, text: "Ask Claude, ChatGPT and Muse which pasta shape suits pesto best", created: at(182)),
+            RemoteAgentMessage(id: UUID(), fromPerson: false, text: "Sent to Claude, ChatGPT and Muse", created: at(182), note: true),
             RemoteAgentMessage(id: UUID(), fromPerson: false, text: "All three replied:\n\n- **Claude** and **Muse** pick trofie: the twists hold the sauce\n- **ChatGPT** prefers linguine, as in Liguria\n\n"
                 + "[Open the comparison](\(link)) · [Claude](\(link)?agent=claude) · [ChatGPT](\(link)?agent=chatgptApp) · [Muse](\(link)?agent=museApp)", created: at(180)),
             RemoteAgentMessage(id: UUID(), fromPerson: true, text: "Now ask them for a nut-free pesto", created: at(6)),
