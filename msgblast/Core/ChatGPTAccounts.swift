@@ -20,6 +20,7 @@ public actor ChatGPTAccounts {
     /// Rotated tokens that could not be saved yet. The old refresh token no longer works.
     private var unsaved: [String: ChatGPTRegistration] = [:]
     private var refreshing: [String: Task<ChatGPTRegistration, Error>] = [:]
+    private var disconnecting: Set<String> = []
 
     public init(storage: Storage, session: URLSession = .shared, now: @escaping @Sendable () -> Date = Date.init) {
         self.storage = storage; self.session = session; self.now = now
@@ -65,7 +66,7 @@ public actor ChatGPTAccounts {
 
     /// A current access token for the active account, refreshed when it is about to expire.
     public func accessToken() async throws -> String {
-        guard let account = try current(), let tokens = account.tokens else { throw ChatGPTSignInError.signedOut }
+        guard let account = try current(), let tokens = account.tokens, !disconnecting.contains(account.clientID) else { throw ChatGPTSignInError.signedOut }
         guard account.sharesPlan else { throw ChatGPTSignInError.sharingOff }
         let date = now()
         if tokens.expiresAt.timeIntervalSince(date) > 60 { return tokens.accessToken }
@@ -101,6 +102,8 @@ public actor ChatGPTAccounts {
     /// Returns false when OpenAI did not confirm the revocation, so the person can disconnect in ChatGPT Settings.
     public func disconnect() async throws -> Bool {
         guard let account = try current() else { return true }
+        disconnecting.insert(account.clientID)
+        defer { disconnecting.remove(account.clientID) }
         _ = try? await refreshing[account.clientID]?.value
         let latest = try registration(account.clientID) ?? account
         var confirmed = latest.tokens?.refreshToken == nil
