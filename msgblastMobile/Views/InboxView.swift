@@ -6,6 +6,7 @@ struct InboxView: View {
     @ObservedObject var app: MobileApp
     @State private var composing = false
     @State private var settings = false
+    @State private var agent = false
     @State private var query = ""
     @FocusState private var searching: Bool
     var launchScreen: LaunchScreen = .inbox
@@ -64,6 +65,16 @@ struct InboxView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 NavigationLink { MobileWantsView() } label: { Label("Wants", systemImage: "checklist") }
             }
+            // Mail's place for its filter: the bar's leading end, beside search. It pulses while the agent works.
+            if app.agentAvailable {
+                ToolbarItem(placement: .bottomBar) {
+                    Button { agent = true } label: {
+                        Image(systemName: "sparkles").symbolEffect(.pulse, isActive: app.store.agentChat?.state == .working)
+                    }
+                    .accessibilityLabel("msgblast agent")
+                    .accessibilityValue(app.store.agentChat?.state == .working ? "Working" : "")
+                }
+            }
             DefaultToolbarItem(kind: .search, placement: .bottomBar)
             ToolbarSpacer(.flexible, placement: .bottomBar)
             ToolbarItem(placement: .bottomBar) {
@@ -72,11 +83,13 @@ struct InboxView: View {
         }
         // A new conversation is an empty thread pushed on the stack, not a sheet.
         .navigationDestination(isPresented: $composing) { NewConversationView(app: app) }
+        .navigationDestination(isPresented: $agent) { AgentView(app: app) }
         // Pull to refresh races the addresses again even while connected (a route may have changed).
         .refreshable { app.connection.reconnectNow() }
         .onAppear {
             if launchScreen == .newConversation { composing = true }
             if launchScreen == .settings { settings = true }
+            if launchScreen == .agent { agent = true }
             #if DEBUG
             // Design review: `MSGBLAST_FIXTURE_SEARCH=<text>` types a query with the keyboard up.
             if let text = ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_SEARCH"] {

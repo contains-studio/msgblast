@@ -11,9 +11,12 @@ import msgblastRemoteProtocol
 /// and `MSGBLAST_FIXTURE_DRAFT=<text>` to pre-fill the composer).
 /// Everything here is simulated; nothing is read from or sent to a Mac.
 enum DesignFixtures {
-    enum Name: String, CaseIterable { case inbox, conversation, conversationShort = "conversation-short", conversationPinned = "conversation-pinned", conversationMany = "conversation-many", typing, incomplete, blocked, new, settings, reconnecting, locked, pairing, pairingPaste = "pairing-paste" }
+    enum Name: String, CaseIterable { case inbox, conversation, conversationShort = "conversation-short", conversationPinned = "conversation-pinned", conversationMany = "conversation-many", typing, incomplete, blocked, new, settings, reconnecting, locked, pairing, pairingPaste = "pairing-paste", agent, agentWorking = "agent-working", agentFailed = "agent-failed", agentSetup = "agent-setup" }
 
-    static var current: Name? { ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE"].flatMap(Name.init(rawValue:)) }
+    /// From the environment, or a `-MSGBLAST_FIXTURE <name>` launch argument for launchers that pass only arguments.
+    static var current: Name? {
+        (ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE"] ?? UserDefaults.standard.string(forKey: "MSGBLAST_FIXTURE")).flatMap(Name.init(rawValue:))
+    }
 
     static let now = Date()
     static let replyText = "Why trofie?"
@@ -34,6 +37,7 @@ enum DesignFixtures {
         case .new: return .newConversation
         case .settings: return .settings
         case .pairingPaste: return .pastePairingLink
+        case .agent, .agentWorking, .agentFailed, .agentSetup: return .agent
         default: return requested.map(LaunchScreen.conversation) ?? .inbox
         }
     }
@@ -71,6 +75,7 @@ enum DesignFixtures {
         // Every row but the group has been read on this phone, so the inbox shows one unread dot.
         for id in [codexDirect, cedarDirect, unfinished, blockedConversation] { app.store.markOpened(id, at: now) }
         if paired { recordFixtureReply(app) }
+        if paired { app.store.handle(.agent(agentChat(name))) }
         return app
     }
 
@@ -101,6 +106,28 @@ enum DesignFixtures {
         try! app.store.recordSent(command, at: now.addingTimeInterval(-50 * 60 + 119))
         app.store.handle(.commandResult(RemoteCommandResult(clientCommandID: command.clientCommandID, outcome: .applied, conversationID: group)))
         app.store.recordReply(command.clientCommandID, quoting: "\(group)-r1")
+    }
+
+    // MARK: msgblast agent
+
+    /// The Mac's agent after summing up the pesto comparison, mid-turn, failed, or not set up.
+    static func agentChat(_ name: Name) -> RemoteAgentChat {
+        let link = "msgblast://comparison/\(group.uuidString)"
+        var messages = [
+            RemoteAgentMessage(id: UUID(), fromPerson: true, text: "Ask Claude, ChatGPT and Muse which pasta shape suits pesto best"),
+            RemoteAgentMessage(id: UUID(), fromPerson: false, text: "Claude, ChatGPT and Muse replied. Claude and Muse pick trofie for how the twists hold the sauce; ChatGPT prefers linguine, as in Liguria.\n\n"
+                + "[Open the comparison](\(link)) · [Claude](\(link)?agent=claude) · [ChatGPT](\(link)?agent=chatgptApp) · [Muse](\(link)?agent=museApp)"),
+        ]
+        if name == .agentWorking || name == .agentFailed { messages.append(RemoteAgentMessage(id: UUID(), fromPerson: true, text: "Now ask them for a nut-free pesto")) }
+        if name == .agentSetup { messages = [] }
+        var chat = RemoteAgentChat(account: name == .agentSetup ? nil : "Claude Code", state: .idle, messageIDs: messages.map(\.id), messages: messages)
+        if name == .agentWorking { chat.state = .working; chat.line = "Sent to 3 agents · waiting for replies…" }
+        if name == .agentFailed {
+            chat.state = .failed
+            chat.line = "Sign in to Claude Code on your Mac"
+            chat.detail = "Claude Code is signed out. Sign in from the msgblast agent bar on your Mac, then ask again."
+        }
+        return chat
     }
 
     // MARK: Projection

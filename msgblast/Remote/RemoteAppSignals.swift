@@ -97,5 +97,6 @@ extension AppModel {
 
 /// `Host.current()` can block on name resolution; read the Mac's name once.
 enum RemoteMacName {
-    @MainActor static let value = Host.current().localizedName ?? "Mac"
+    /// `MSGBLAST_REMOTE_MAC_NAME` replaces the computer's name, so phone evidence never shows a person's name.
+    @MainActor static let value = ProcessInfo.processInfo.environment["MSGBLAST_REMOTE_MAC_NAME"] ?? Host.current().localizedName ?? "Mac"
 }

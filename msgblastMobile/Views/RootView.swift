@@ -47,7 +47,7 @@ extension RootView {
 
 /// Where the app opens. Production always opens on the inbox (or pairing).
 enum LaunchScreen: Equatable {
-    case inbox, conversation(UUID), newConversation, settings, pastePairingLink
+    case inbox, conversation(UUID), newConversation, settings, pastePairingLink, agent
 }
 
 /// The connection status as the navigation subtitle, where Mail and Messages put theirs:
