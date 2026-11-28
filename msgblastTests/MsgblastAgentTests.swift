@@ -5,13 +5,14 @@ private final class ScriptedRunner: MsgblastAgentRunner {
     var events: [MsgblastAgentEvent]
     var sent: [String] = []
     var closed = false
+    var closePause = Duration.zero
     init(_ events: [MsgblastAgentEvent]) { self.events = events }
     func send(_ text: String) -> AsyncStream<MsgblastAgentEvent> {
         sent.append(text)
         return AsyncStream { continuation in events.forEach { continuation.yield($0) }; continuation.finish() }
     }
     func interrupt() async {}
-    func close() async { closed = true }
+    func close() async { try? await Task.sleep(for: closePause); closed = true }
 }
 
 @MainActor
@@ -47,6 +48,29 @@ final class MsgblastAgentTests: XCTestCase {
         XCTAssertNil(controller.conversation.sessionID)
         XCTAssertEqual(controller.conversation.messages.count, 2)
         XCTAssertEqual(resumed, [nil])
+    }
+
+    func testSendWhileTheOldRunnerClosesStartsTheNewAccount() async {
+        let old = ScriptedRunner([.completed(sessionID: "old")])
+        old.closePause = .milliseconds(200)
+        var made: [(MsgblastAgentAccount, String?)] = []
+        let controller = MsgblastAgentController(store: MsgblastAgentStore(directory: directory)) { account, session in
+            made.append((account, session))
+            return made.count == 1 ? old : ScriptedRunner([.completed(sessionID: "new")])
+        }
+        await controller.choose(.claude)
+        controller.send("First")
+        await settle(controller)
+        let switching = Task { await controller.choose(.codexLogin) }
+        await Task.yield()
+        controller.send("Second")
+        await settle(controller)
+        await switching.value
+        XCTAssertTrue(old.closed)
+        XCTAssertEqual(made.map(\.0), [.claude, .codexLogin])
+        XCTAssertNil(made[1].1)
+        XCTAssertEqual(controller.conversation.account, .codexLogin)
+        XCTAssertEqual(controller.conversation.sessionID, "new")
     }
 
     func testTurnThatEndsWithoutCompletionFailsWithoutResending() async {
