@@ -27,7 +27,7 @@ public actor ChatGPTAccounts {
 
     /// The account in use, or the last one used. Its `tokens` are nil after disconnecting.
     public func current() throws -> ChatGPTRegistration? {
-        try index().active.flatMap(registration)
+        try savedIndex()?.active.flatMap(registration)
     }
 
     /// The browser URL for a sign-in. Signs the current account in again unless `newAccount` is set.
@@ -144,12 +144,16 @@ public actor ChatGPTAccounts {
 
     /// The index, created with a new host id before the first sign-in. A failed read throws rather than starting over.
     func index() throws -> Index {
-        if let data = try storage.read("index") {
-            guard let index = try? JSONDecoder().decode(Index.self, from: data) else { throw ChatGPTSignInError.storage }
-            return index
-        }
+        if let index = try savedIndex() { return index }
         let index = Index(hostID: "urn:uuid:\(UUID().uuidString.lowercased())", active: nil, clientIDs: [])
         try write("index", index)
+        return index
+    }
+
+    /// The index if one was saved. Reading never writes, so showing the account works without storage access.
+    private func savedIndex() throws -> Index? {
+        guard let data = try storage.read("index") else { return nil }
+        guard let index = try? JSONDecoder().decode(Index.self, from: data) else { throw ChatGPTSignInError.storage }
         return index
     }
 
@@ -169,7 +173,7 @@ public actor ChatGPTAccounts {
     }
 
     private func write(_ key: String, _ value: some Encodable) throws {
-        do { try storage.write(key, try JSONEncoder().encode(value)) } catch { throw ChatGPTSignInError.storage }
+        do { try storage.write(key, try JSONEncoder().encode(value)) } catch let error as ChatGPTSignInError { throw error } catch { throw ChatGPTSignInError.storage }
     }
 }
 
@@ -204,6 +208,8 @@ extension ChatGPTAccounts.Storage {
                 item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
                 status = SecItemAdd(item as CFDictionary, nil)
             }
+            // An app without a Keychain access group entitlement gets errSecMissingEntitlement (-34018).
+            if status == errSecMissingEntitlement { throw ChatGPTSignInError.storageUnavailable }
             guard status == errSecSuccess else { throw ChatGPTSignInError.storage }
         })
     }

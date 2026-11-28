@@ -13,7 +13,9 @@ command -v codex >/dev/null || { echo "Install the Codex CLI to run this check."
 frameworks="$(cd -- "$frameworks" && pwd)"
 # A short folder, because a Unix socket path is limited to 104 bytes.
 tmp="$(mktemp -d /tmp/msgblast-chatgpt.XXXXXX)"
-trap 'kill "${fixture:-}" 2>/dev/null && wait "$fixture" 2>/dev/null; rm -rf "$tmp"' EXIT
+# Keeps the script's own status; under set -e, waiting on the killed fixture would exit 143.
+cleanup() { local status=$?; [[ -n "${fixture:-}" ]] && { kill "$fixture" 2>/dev/null; wait "$fixture" 2>/dev/null || true; }; rm -rf "$tmp"; exit "$status"; }
+trap cleanup EXIT
 xcrun swiftc -swift-version 6 -parse-as-library -module-cache-path "$tmp/module-cache" \
     -target "$(uname -m)-apple-macos15.0" -I "$frameworks" -F "$frameworks" -framework msgblastCore \
     -Xlinker -rpath -Xlinker "$frameworks" \
