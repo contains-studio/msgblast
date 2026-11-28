@@ -139,15 +139,17 @@ final class RemoteService: ObservableObject {
     private func serveAgent(_ server: RemoteServer) {
         let agent = model.msgblastAgent, activity = model.agentSendActivity
         server.agentChat = { agent.remoteChat(agentCount: MsgblastAgent.latestAgentCount(activity)) }
-        agent.objectWillChange.map { _ in }.merge(with: activity.objectWillChange.map { _ in }).sink { [weak self, weak server] in
+        agentSubscription = agent.objectWillChange.map { _ in }.merge(with: activity.objectWillChange.map { _ in }).sink { [weak self, weak server] in
             guard let self, self.agentPush == nil else { return }
             self.agentPush = Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(150))
+                guard !Task.isCancelled else { return }
                 self.agentPush = nil
                 server?.agentChanged()
             }
-        }.store(in: &subscriptions)
+        }
     }
+    private var agentSubscription: AnyCancellable?
     private var agentPush: Task<Void, Never>?
 
     private func startListener() async {
@@ -186,6 +188,8 @@ final class RemoteService: ObservableObject {
         availability.stop()
         keepAwake.setClient(connected: false)
         host?.discardStagedAttachments(); host = nil
+        agentSubscription = nil
+        agentPush?.cancel(); agentPush = nil
         server = nil
         pairing.closeOffer()
         running = false

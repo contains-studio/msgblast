@@ -284,8 +284,11 @@ final class AppRemoteHost: RemoteCommandHost {
         if let error = agent.loadError { return .rejected(.failed, error) }
         guard agent.conversation.account != nil else { return .rejected(.agentUnavailable, "Set up the msgblast agent on your Mac") }
         guard !agent.isWorking else { return .rejected(.macBusy, "The msgblast agent is still working") }
+        let sent = agent.conversation.messages.count
         agent.send(text)
-        if case .failed(let message) = agent.status { return .rejected(.failed, message) }
+        // A saved message is committed even when the turn then fails to start.
+        let saved = agent.conversation.messages.count > sent
+        if case .failed(let message) = agent.status { return saved ? .applied(message: message) : .rejected(.failed, message) }
         return agent.isWorking ? .applied(message: "Asked the msgblast agent") : .rejected(.failed, "The msgblast agent didn't start")
     }
 
