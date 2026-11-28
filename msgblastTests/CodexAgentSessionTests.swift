@@ -74,15 +74,17 @@ final class CodexAgentSessionTests: XCTestCase {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let session = CodexAgentSession(agent: try codex(in: directory), instructions: "", sessionKey: "key")
-        let waiting = session.send("wait")
-        while try !requests(in: directory).contains(where: { $0["method"] as? String == "turn/start" }) {
-            try await Task.sleep(for: .milliseconds(20))
+        // The fixture streams "Waiting" after `turn/started`, so the turn ID is known when Stop is pressed.
+        let busy = Received()
+        let interrupted = await events(session.send("wait")) { event in
+            guard event == .text("Waiting") else { return }
+            for await event in session.send("reply") { await busy.append(event) }
+            await session.interrupt()
+            await session.interrupt()
         }
-        let busy = await events(session.send("reply"))
-        XCTAssertEqual(busy, [.failed(CodexAgentSessionError.busy.errorDescription!)])
-        await session.interrupt()
-        let interrupted = await events(waiting)
-        XCTAssertEqual(interrupted, [.completed(sessionID: "thread-fixture")])
+        XCTAssertEqual(interrupted, [.text("Waiting"), .completed(sessionID: "thread-fixture")])
+        let busyEvents = await busy.events
+        XCTAssertEqual(busyEvents, [.failed(CodexAgentSessionError.busy.errorDescription!)])
         let failed = await events(session.send("fail"))
         XCTAssertEqual(failed, [.failed("Usage limit reached.")])
         guard case .failed(let stopped) = await events(session.send("exit")).last else { return XCTFail("exit did not fail") }
@@ -109,9 +111,22 @@ final class CodexAgentSessionTests: XCTestCase {
         XCTAssertTrue(message.contains("unrecognized subcommand"), message)
     }
 
-    private func events(_ stream: AsyncStream<MsgblastAgentEvent>) async -> [MsgblastAgentEvent] {
-        var events: [MsgblastAgentEvent] = []
-        for await event in stream { events.append(event) }
+    /// Collects a turn's events. A turn that doesn't end within 20 seconds fails the test instead of hanging it.
+    private func events(_ stream: AsyncStream<MsgblastAgentEvent>, file: StaticString = #filePath, line: UInt = #line,
+                        onEach: @escaping @Sendable (MsgblastAgentEvent) async -> Void = { _ in }) async -> [MsgblastAgentEvent] {
+        let received = Received()
+        let ended = await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                for await event in stream { await received.append(event); await onEach(event) }
+                return true
+            }
+            group.addTask { try? await Task.sleep(for: .seconds(20)); return false }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
+        let events = await received.events
+        if !ended { XCTFail("The turn didn't end within 20 seconds. Events so far: \(events)", file: file, line: line) }
         return events
     }
 
@@ -140,4 +155,9 @@ final class CodexAgentSessionTests: XCTestCase {
             try JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]
         }
     }
+}
+
+private actor Received {
+    var events: [MsgblastAgentEvent] = []
+    func append(_ event: MsgblastAgentEvent) { events.append(event) }
 }
